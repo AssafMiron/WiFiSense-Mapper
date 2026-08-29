@@ -6,7 +6,9 @@
 
 **Custom Home Assistant integration for WiFi-based room mapping, signal heatmaps, and object/furniture anomaly detection.**
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=AssafMiron&repository=WiFiSense-Mapper&category=integration)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![Documentation](https://img.shields.io/badge/Documentation-WiFiSense%20Mapper-blue.svg)](https://github.com/AssafMiron/WiFiSense-Mapper#readme)
 [![HA version](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue)](https://www.home-assistant.io)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
