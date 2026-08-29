@@ -17,6 +17,7 @@ Limitations:
     causing apparent AP assignment changes. The coordinator smooths
     this with a short rolling window.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,9 +43,7 @@ class DecoClient(RouterClient):
         an executor to avoid blocking the HA event loop.
         """
         try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._connect_sync
-            )
+            await asyncio.get_event_loop().run_in_executor(None, self._connect_sync)
             self._connected = True
             _LOGGER.debug("Connected to Deco at %s", self.host)
             return True
@@ -69,9 +68,10 @@ class DecoClient(RouterClient):
 
     async def async_get_clients(self) -> list[ClientInfo]:
         """Return connected WiFi clients from the Deco."""
-        if not self._connected or self._client is None:
-            if not await self.async_connect():
-                return []
+        if (
+            not self._connected or self._client is None
+        ) and not await self.async_connect():
+            return []
         try:
             raw = await asyncio.get_event_loop().run_in_executor(
                 None, self._get_clients_sync
@@ -101,12 +101,11 @@ class DecoClient(RouterClient):
                 ClientInfo(
                     mac=self.normalize_mac(mac_raw),
                     ip=getattr(client, "ip", None),
-                    hostname=getattr(client, "hostname", None) or getattr(client, "name", None),
+                    hostname=getattr(client, "hostname", None)
+                    or getattr(client, "name", None),
                     # RSSI exposure varies by Deco model — not always available
                     rssi=getattr(client, "rssi", None),
-                    ap_mac=self.normalize_mac(
-                        getattr(client, "device_mac", None) or ""
-                    )
+                    ap_mac=self.normalize_mac(getattr(client, "device_mac", None) or "")
                     or None,
                     ssid=getattr(client, "ssid", None),
                     band=getattr(client, "band", None),
@@ -120,13 +119,15 @@ class DecoClient(RouterClient):
 
     async def async_get_ap_stats(self) -> list[APStats]:
         """Return per-Deco-node statistics."""
-        if not self._connected or self._client is None:
-            if not await self.async_connect():
-                return []
+        if (
+            not self._connected or self._client is None
+        ) and not await self.async_connect():
+            return []
         try:
             return await asyncio.get_event_loop().run_in_executor(
                 None, self._get_ap_stats_sync
             )
+
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Error fetching Deco AP stats: %s", exc)
             return []
@@ -147,16 +148,20 @@ class DecoClient(RouterClient):
             result.append(
                 APStats(
                     mac=self.normalize_mac(mac_raw),
-                    name=getattr(device, "name", None) or getattr(device, "device_model", None),
+                    name=getattr(device, "name", None)
+                    or getattr(device, "device_model", None),
                     channel=getattr(device, "channel", None),
                     band=getattr(device, "band", None),
                     tx_rate=getattr(device, "tx_rate", None),
                     rx_rate=getattr(device, "rx_rate", None),
                     noise_floor=getattr(device, "noise_floor", None),
                     client_count=len(
-                        [c for c in getattr(status, "clients", []) if
-                         self.normalize_mac(getattr(c, "device_mac", "") or "") ==
-                         self.normalize_mac(mac_raw)]
+                        [
+                            c
+                            for c in getattr(status, "clients", [])
+                            if self.normalize_mac(getattr(c, "device_mac", "") or "")
+                            == self.normalize_mac(mac_raw)
+                        ]
                     ),
                     extra={"via_deco": True},
                 )

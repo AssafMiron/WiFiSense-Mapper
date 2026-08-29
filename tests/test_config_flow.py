@@ -1,17 +1,18 @@
 """Tests for the WiFiSense Mapper config flow."""
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant import data_entry_flow
 from homeassistant.core import HomeAssistant
 
 from custom_components.wifisense_mapper.const import (
-    DOMAIN,
-    CONF_ROUTER_TYPE,
     CONF_ROUTER_HOST,
     CONF_ROUTER_PASSWORD,
+    CONF_ROUTER_TYPE,
+    DOMAIN,
     ROUTER_TYPE_DECO,
     ROUTER_TYPE_NONE,
     ROUTER_TYPE_UNIFI,
@@ -47,7 +48,7 @@ async def test_config_flow_deco_connect_fail(hass: HomeAssistant) -> None:
     )
 
     with patch(
-        "custom_components.wifisense_mapper.config_flow.DecoClient.async_connect",
+        "custom_components.wifisense_mapper.clients.deco.DecoClient.async_connect",
         AsyncMock(return_value=False),
     ):
         result2 = await hass.config_entries.flow.async_configure(
@@ -74,11 +75,11 @@ async def test_config_flow_deco_success(hass: HomeAssistant) -> None:
 
     with (
         patch(
-            "custom_components.wifisense_mapper.config_flow.DecoClient.async_connect",
+            "custom_components.wifisense_mapper.clients.deco.DecoClient.async_connect",
             AsyncMock(return_value=True),
         ),
         patch(
-            "custom_components.wifisense_mapper.config_flow.DecoClient.async_disconnect",
+            "custom_components.wifisense_mapper.clients.deco.DecoClient.async_disconnect",
             AsyncMock(),
         ),
     ):
@@ -109,7 +110,7 @@ async def test_config_flow_unifi_no_credentials(hass: HomeAssistant) -> None:
 @pytest.mark.asyncio
 async def test_options_flow(hass: HomeAssistant, mock_config_entry_no_router) -> None:
     """Test options flow saves updated poll interval."""
-    hass.config_entries._entries[mock_config_entry_no_router.entry_id] = mock_config_entry_no_router
+    mock_config_entry_no_router.add_to_hass(hass)
 
     result = await hass.config_entries.options.async_init(
         mock_config_entry_no_router.entry_id
@@ -118,7 +119,12 @@ async def test_options_flow(hass: HomeAssistant, mock_config_entry_no_router) ->
 
     result2 = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"poll_interval": 60, "heatmap_enabled": False, "anomaly_threshold": 4.0, "baseline_days": 14},
+        {
+            "poll_interval": 60,
+            "heatmap_enabled": False,
+            "anomaly_threshold": 4.0,
+            "baseline_days": 14,
+        },
     )
     assert result2["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result2["data"]["poll_interval"] == 60

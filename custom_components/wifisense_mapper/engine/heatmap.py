@@ -20,6 +20,7 @@ Implementation strategy:
 
 All rendering runs in an executor thread — never blocks the event loop.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,26 +35,26 @@ _LOGGER = logging.getLogger(__name__)
 # Colormaps: name → list of (r, g, b) anchor points (0–255)
 COLORMAPS: dict[str, list[tuple[int, int, int]]] = {
     "thermal": [
-        (0, 0, 131),    # deep blue  (0.0)
-        (0, 60, 255),   # blue       (0.2)
+        (0, 0, 131),  # deep blue  (0.0)
+        (0, 60, 255),  # blue       (0.2)
         (0, 255, 255),  # cyan       (0.4)
-        (0, 200, 0),    # green      (0.5)
+        (0, 200, 0),  # green      (0.5)
         (255, 255, 0),  # yellow     (0.7)
-        (255, 60, 0),   # orange     (0.85)
-        (128, 0, 0),    # dark red   (1.0)
+        (255, 60, 0),  # orange     (0.85)
+        (128, 0, 0),  # dark red   (1.0)
     ],
     "motion": [
-        (10, 10, 30),   # dark navy  (0.0 = no motion)
-        (0, 80, 180),   # blue       (0.3)
+        (10, 10, 30),  # dark navy  (0.0 = no motion)
+        (0, 80, 180),  # blue       (0.3)
         (0, 200, 200),  # teal       (0.6)
         (255, 200, 0),  # yellow     (0.8)
-        (255, 50, 0),   # red-orange (1.0 = high motion)
+        (255, 50, 0),  # red-orange (1.0 = high motion)
     ],
     "anomaly": [
-        (30, 30, 30),   # dark gray  (0.0 = normal)
-        (0, 100, 0),    # dark green (0.3)
+        (30, 30, 30),  # dark gray  (0.0 = normal)
+        (0, 100, 0),  # dark green (0.3)
         (255, 200, 0),  # yellow     (0.7 = moderate anomaly)
-        (255, 0, 0),    # red        (1.0 = high anomaly)
+        (255, 0, 0),  # red        (1.0 = high anomaly)
     ],
 }
 DEFAULT_COLORMAP = "thermal"
@@ -173,6 +174,7 @@ def _render_png_pillow(
                     img.putpixel((c * scale + dx, r * scale + dy), color)
 
     import io
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -207,17 +209,19 @@ def _render_bmp_fallback(
     header = (
         b"BM"
         + le4(file_size)
-        + le4(0)        # reserved
-        + le4(54)       # pixel data offset
-        + le4(40)       # BITMAPINFOHEADER size
+        + le4(0)  # reserved
+        + le4(54)  # pixel data offset
+        + le4(40)  # BITMAPINFOHEADER size
         + le4(w)
         + le4(-h & 0xFFFFFFFF)  # negative height = top-down
-        + le2(1)        # color planes
-        + le2(24)       # bits per pixel
-        + le4(0)        # no compression
+        + le2(1)  # color planes
+        + le2(24)  # bits per pixel
+        + le4(0)  # no compression
         + le4(pixel_data_size)
-        + le4(2835) + le4(2835)  # pixels per meter (72 dpi)
-        + le4(0) + le4(0)        # colors used / important
+        + le4(2835)
+        + le4(2835)  # pixels per meter (72 dpi)
+        + le4(0)
+        + le4(0)  # colors used / important
     )
 
     rows_out = bytearray()
@@ -253,7 +257,8 @@ class HeatmapRenderer:
         """Detect Pillow availability (cached after first check)."""
         if self._pillow_available is None:
             try:
-                import PIL  # noqa: F401, PLC0415
+                import PIL  # noqa: F401
+
                 self._pillow_available = True
             except ImportError:
                 _LOGGER.info(
@@ -263,34 +268,43 @@ class HeatmapRenderer:
                 self._pillow_available = False
         return self._pillow_available
 
-    def render_signal(self, grid: "SpatialGrid") -> bytes:
+    def render_signal(self, grid: SpatialGrid) -> bytes:
         """Render mean RSSI heatmap. Call in executor thread."""
         matrix = grid.to_rssi_matrix()
         return self._render(
-            matrix, grid.rows, grid.cols,
-            vmin=RSSI_MIN, vmax=RSSI_MAX,
+            matrix,
+            grid.rows,
+            grid.cols,
+            vmin=RSSI_MIN,
+            vmax=RSSI_MAX,
             colormap_name=self.colormap_name,
         )
 
-    def render_variance(self, grid: "SpatialGrid") -> bytes:
+    def render_variance(self, grid: SpatialGrid) -> bytes:
         """Render RSSI variance heatmap (obstacle shadows). Call in executor."""
         matrix: list[list[float | None]] = [
             [
-                grid.get_cell(c, r).rssi_variance if grid.get_cell(c, r) else None
+                (
+                    cell.rssi_variance
+                    if (cell := grid.get_cell(c, r)) is not None
+                    else None
+                )
                 for c in range(grid.cols)
             ]
             for r in range(grid.rows)
         ]
-        return self._render(matrix, grid.rows, grid.cols, colormap_name=self.colormap_name)
+        return self._render(
+            matrix, grid.rows, grid.cols, colormap_name=self.colormap_name
+        )
 
-    def render_motion(self, grid: "SpatialGrid") -> bytes:
+    def render_motion(self, grid: SpatialGrid) -> bytes:
         """Render CSI motion score heatmap. Call in executor."""
         matrix = grid.to_csi_matrix()
         return self._render(matrix, grid.rows, grid.cols, colormap_name="motion")
 
     def render_anomaly(
         self,
-        grid: "SpatialGrid",
+        grid: SpatialGrid,
         anomaly_scores: dict[tuple[int, int], float],
     ) -> bytes:
         """Render anomaly z-score heatmap. Call in executor.
@@ -315,7 +329,9 @@ class HeatmapRenderer:
         """Internal render pipeline: IDW → normalize → colormap → PNG/BMP."""
         interpolated = _interpolate_idw(matrix, rows, cols)
         normalized = _normalize(interpolated, rows, cols, vmin=vmin, vmax=vmax)
-        cmap = COLORMAPS[colormap_name if colormap_name in COLORMAPS else DEFAULT_COLORMAP]
+        cmap = COLORMAPS[
+            colormap_name if colormap_name in COLORMAPS else DEFAULT_COLORMAP
+        ]
 
         pixel_data = [
             [_colormap_lookup(normalized[r][c], cmap) for c in range(cols)]

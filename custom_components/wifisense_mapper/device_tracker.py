@@ -17,6 +17,7 @@ Accuracy notes:
     or roam between APs without triggering a position update.
   - Do not rely on this for security-critical presence detection.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,7 +35,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import WiFiSenseCoordinator
-from .sensor import _ap_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,9 +65,7 @@ async def async_setup_entry(
             manufacturer=MANUFACTURER,
             model="WiFi Client",
         )
-        entities.append(
-            WifiSenseDeviceTracker(coordinator, entry, mac, device_info)
-        )
+        entities.append(WifiSenseDeviceTracker(coordinator, entry, mac, device_info))
 
     async_add_entities(entities)
 
@@ -97,12 +95,20 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
         self._mac = mac
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_tracker_{mac}"
-        self._attr_device_info = device_info
+        self._device_info = device_info
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return self._device_info
 
     @property
     def name(self) -> str:
         client = self.coordinator.router_clients.get(self._mac)
-        return client.hostname or f"Device {self._mac}" if client else f"Device {self._mac}"
+        return (
+            client.hostname or f"Device {self._mac}"
+            if client
+            else f"Device {self._mac}"
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -154,13 +160,16 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
             "band": client.band,
             "rssi": client.rssi,
             "ap_mac": client.ap_mac,
-            "ap_name": self.coordinator.ap_stats.get(client.ap_mac or "", None) and
-                       getattr(self.coordinator.ap_stats.get(client.ap_mac or ""), "name", None),
+            "ap_name": self.coordinator.ap_stats.get(client.ap_mac or "", None)
+            and getattr(
+                self.coordinator.ap_stats.get(client.ap_mac or ""), "name", None
+            ),
         }
 
     def _area_name(self, area_id: str) -> str:
         try:
-            from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+            from homeassistant.helpers import area_registry as ar
+
             reg = ar.async_get(self.hass)
             area = reg.async_get_area(area_id)
             return area.name if area else area_id
@@ -169,7 +178,8 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
 
     def _floor_name(self, floor_id: str) -> str:
         try:
-            from homeassistant.helpers import floor_registry as fr  # noqa: PLC0415
+            from homeassistant.helpers import floor_registry as fr
+
             reg = fr.async_get(self.hass)
             floor = reg.async_get_floor(floor_id)
             return floor.name if floor else floor_id

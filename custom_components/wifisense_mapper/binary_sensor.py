@@ -5,10 +5,11 @@ Provides binary (on/off) signals for:
   - ObjectAnomalyBinarySensor: fires when anomaly score exceeds threshold
   - CSIMotionBinarySensor   : multi-node CSI motion detection for a floor
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -20,9 +21,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL, DEFAULT_ANOMALY_THRESHOLD
+from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import WiFiSenseCoordinator
-from .sensor import _floor_device_info, _get_floor_name, _node_device_info
+from .sensor import _floor_device_info, _get_floor_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,9 +39,10 @@ async def async_setup_entry(
 
     entities: list[BinarySensorEntity] = []
 
-    for floor_id, grid in coordinator.grids.items():
+    for floor_id in coordinator.grids:
         floor_name = _get_floor_name(hass, floor_id)
         device_info = _floor_device_info(entry, floor_id, floor_name)
+
         entities.append(
             ObjectAnomalyBinarySensor(
                 coordinator, entry, floor_id, floor_name, threshold, device_info
@@ -51,7 +53,8 @@ async def async_setup_entry(
         )
 
     # Per-area presence sensors (one per HA area)
-    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+    from homeassistant.helpers import area_registry as ar
+
     area_reg = ar.async_get(hass)
     for area in area_reg.areas.values():
         device_info = DeviceInfo(
@@ -131,9 +134,10 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
         # Source B: CSI motion detected in this area
         csi_nodes = data.get("csi_nodes", [])
         for node in csi_nodes:
-            if node.area_id == self._area_id:
-                if getattr(node, "motion_detected_value", False):
-                    return True
+            if node.area_id == self._area_id and getattr(
+                node, "motion_detected_value", False
+            ):
+                return True
 
         return False
 
@@ -252,14 +256,14 @@ class CSIMotionBinarySensor(WiFiSenseBaseBinary):
         data = self.coordinator.data or {}
         csi_nodes = data.get("csi_nodes", [])
         floor_nodes = [
-            n for n in csi_nodes
-            if (n.floor_id or "default") == self._floor_id
+            n for n in csi_nodes if (n.floor_id or "default") == self._floor_id
         ]
         return {
             "floor_id": self._floor_id,
             "node_count": len(floor_nodes),
             "active_nodes": [
-                n.name for n in floor_nodes
+                n.name
+                for n in floor_nodes
                 if getattr(n, "motion_detected_value", False)
             ],
         }

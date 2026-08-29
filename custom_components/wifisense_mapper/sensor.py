@@ -6,10 +6,11 @@ Exposes per-floor and per-area measurements as HA sensor entities:
   - CSIMotionScoreSensor   : aggregated CSI motion score for an area
   - AnomalyScoreSensor     : max spatial anomaly z-score for a floor
 """
+
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -19,15 +20,12 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import WiFiSenseCoordinator
-
-if TYPE_CHECKING:
-    pass
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +41,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
 
     # Per-floor sensors
-    for floor_id, grid in coordinator.grids.items():
+    for floor_id in coordinator.grids:
         floor_name = _get_floor_name(hass, floor_id)
         device_info = _floor_device_info(entry, floor_id, floor_name)
 
@@ -58,9 +56,7 @@ async def async_setup_entry(
     for node in coordinator.csi_nodes:
         if node.motion_score_entity_id:
             device_info = _node_device_info(entry, node.device_id, node.name)
-            entities.append(
-                CSIMotionScoreSensor(coordinator, entry, node, device_info)
-            )
+            entities.append(CSIMotionScoreSensor(coordinator, entry, node, device_info))
 
     # Per-AP RSSI sensors
     for ap_mac, ap in coordinator.ap_stats.items():
@@ -120,18 +116,14 @@ class WifiClientCountSensor(WiFiSenseBaseSensor):
 
         # Collect AP MACs that are on this floor
         floor_ap_macs = {
-            mac for mac, ap in ap_stats.items()
-            if (ap.floor_id or "") == self._floor_id
+            mac for mac, ap in ap_stats.items() if (ap.floor_id or "") == self._floor_id
         }
 
         if not floor_ap_macs:
             # If no floor assignment, return total
             return len(clients)
 
-        return sum(
-            1 for c in clients.values()
-            if c.ap_mac in floor_ap_macs
-        )
+        return sum(1 for c in clients.values() if c.ap_mac in floor_ap_macs)
 
 
 class RSSISignalSensor(WiFiSenseBaseSensor):
@@ -149,7 +141,9 @@ class RSSISignalSensor(WiFiSenseBaseSensor):
         ap_name: str,
         device_info: DeviceInfo,
     ) -> None:
-        super().__init__(coordinator, entry, f"rssi_{ap_mac.replace(':', '_')}", device_info)
+        super().__init__(
+            coordinator, entry, f"rssi_{ap_mac.replace(':', '_')}", device_info
+        )
         self._ap_mac = ap_mac
         self._attr_name = f"{ap_name} Average RSSI"
 
@@ -160,7 +154,8 @@ class RSSISignalSensor(WiFiSenseBaseSensor):
         clients = data.get("router_clients", {})
 
         values = [
-            c.rssi for c in clients.values()
+            c.rssi
+            for c in clients.values()
             if c.ap_mac == self._ap_mac and c.rssi is not None
         ]
         if not values:
@@ -256,9 +251,11 @@ class AnomalyScoreSensor(WiFiSenseBaseSensor):
 
 # ─── Device info helpers ───────────────────────────────────────────────────────
 
+
 def _get_floor_name(hass: HomeAssistant, floor_id: str) -> str:
     try:
-        from homeassistant.helpers import floor_registry as fr  # noqa: PLC0415
+        from homeassistant.helpers import floor_registry as fr
+
         reg = fr.async_get(hass)
         floor = reg.async_get_floor(floor_id)
         return floor.name if floor else floor_id
@@ -266,13 +263,15 @@ def _get_floor_name(hass: HomeAssistant, floor_id: str) -> str:
         return floor_id
 
 
-def _floor_device_info(entry: ConfigEntry, floor_id: str, floor_name: str) -> DeviceInfo:
+def _floor_device_info(
+    entry: ConfigEntry, floor_id: str, floor_name: str
+) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, f"{entry.entry_id}_{floor_id}")},
         name=f"WiFiSense — {floor_name}",
         manufacturer=MANUFACTURER,
         model=MODEL,
-        entry_type="service",  # type: ignore[arg-type]
+        entry_type=DeviceEntryType.SERVICE,
     )
 
 

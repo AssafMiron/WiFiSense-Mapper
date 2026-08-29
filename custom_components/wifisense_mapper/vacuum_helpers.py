@@ -19,6 +19,7 @@ Multi-floor notes:
   - When available, we read the current active map and attempt to
     match it to the corresponding HA Floor by name similarity.
 """
+
 from __future__ import annotations
 
 import logging
@@ -72,13 +73,13 @@ class VacuumMapSource:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def discover_vacuum_maps(hass: "HomeAssistant") -> list[VacuumMapSource]:
+def discover_vacuum_maps(hass: HomeAssistant) -> list[VacuumMapSource]:
     """Scan entity registry for vacuum map image/camera entities.
 
     Returns one VacuumMapSource per discovered map entity.
     Room segments are read from entity state attributes where available.
     """
-    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er
 
     ent_reg = er.async_get(hass)
     found: list[VacuumMapSource] = []
@@ -104,7 +105,9 @@ def discover_vacuum_maps(hass: "HomeAssistant") -> list[VacuumMapSource]:
         source = VacuumMapSource(
             entity_id=entry.entity_id,
             platform=entry.platform,
-            map_name=attrs.get("map_name") or attrs.get("friendly_name") or entry.entity_id,
+            map_name=attrs.get("map_name")
+            or attrs.get("friendly_name")
+            or entry.entity_id,
             room_segments=segments,
             extra={
                 "device_id": entry.device_id,
@@ -114,7 +117,9 @@ def discover_vacuum_maps(hass: "HomeAssistant") -> list[VacuumMapSource]:
         found.append(source)
         _LOGGER.debug(
             "Vacuum map entity discovered: %s (platform=%s, segments=%d)",
-            entry.entity_id, entry.platform, len(segments),
+            entry.entity_id,
+            entry.platform,
+            len(segments),
         )
 
     _LOGGER.info("Vacuum map discovery complete: found %d map entity/ies", len(found))
@@ -155,14 +160,14 @@ def _extract_segments(attrs: dict[str, Any]) -> list[VacuumRoomSegment]:
     return segments
 
 
-async def async_fetch_map_image(hass: "HomeAssistant", entity_id: str) -> bytes | None:
+async def async_fetch_map_image(hass: HomeAssistant, entity_id: str) -> bytes | None:
     """Fetch the current map image bytes from an image/camera entity.
 
     Returns raw PNG bytes or None on failure.
     The returned image is passed to the spatial engine for alignment;
     it is NOT stored in entity state — only the rendered heatmap overlay is.
     """
-    import asyncio  # noqa: PLC0415
+    import asyncio
 
     state = hass.states.get(entity_id)
     if state is None:
@@ -174,20 +179,30 @@ async def async_fetch_map_image(hass: "HomeAssistant", entity_id: str) -> bytes 
     try:
         if domain == "image":
             # HA image platform: use async_get_image service
-            from homeassistant.components.image import async_get_still_stream  # noqa: PLC0415, F401
+            from homeassistant.components.image import (
+                async_get_still_stream,  # noqa: F401
+            )
+
             # Fallback: read from state attributes if image_url is exposed
-            img_url = state.attributes.get("entity_picture") or state.attributes.get("image_url")
+            img_url = state.attributes.get("entity_picture") or state.attributes.get(
+                "image_url"
+            )
             if img_url:
-                import aiohttp  # noqa: PLC0415
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
+                import aiohttp
+
+                async with (
+                    aiohttp.ClientSession() as session,
+                    session.get(
                         f"http://localhost:8123{img_url}",
                         timeout=aiohttp.ClientTimeout(total=10),
-                    ) as resp:
-                        if resp.status == 200:
-                            return await resp.read()
+                    ) as resp,
+                ):
+                    if resp.status == 200:
+                        return await resp.read()
+
         elif domain == "camera":
-            from homeassistant.components.camera import async_get_image  # noqa: PLC0415
+            from homeassistant.components.camera import async_get_image
+
             image = await async_get_image(hass, entity_id, timeout=10)
             return image.content if image else None
     except asyncio.TimeoutError:

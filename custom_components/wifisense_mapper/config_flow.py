@@ -1,32 +1,32 @@
 """WiFiSense Mapper — Config Flow & Options Flow."""
+
 from __future__ import annotations
 
 import logging
-import voluptuous as vol
 from typing import Any
 
+import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
-    DOMAIN,
-    CONF_ROUTER_TYPE,
-    CONF_ROUTER_HOST,
-    CONF_ROUTER_USERNAME,
-    CONF_ROUTER_PASSWORD,
-    CONF_VACUUM_ENTITIES,
-    CONF_POLL_INTERVAL,
-    CONF_HEATMAP_ENABLED,
     CONF_ANOMALY_THRESHOLD,
     CONF_BASELINE_DAYS,
-    ROUTER_TYPE_DECO,
-    ROUTER_TYPE_UNIFI,
-    ROUTER_TYPE_NONE,
-    ROUTER_TYPES,
-    DEFAULT_POLL_INTERVAL,
+    CONF_HEATMAP_ENABLED,
+    CONF_POLL_INTERVAL,
+    CONF_ROUTER_HOST,
+    CONF_ROUTER_PASSWORD,
+    CONF_ROUTER_TYPE,
+    CONF_ROUTER_USERNAME,
+    CONF_VACUUM_ENTITIES,
     DEFAULT_ANOMALY_THRESHOLD,
     DEFAULT_BASELINE_DAYS,
+    DEFAULT_POLL_INTERVAL,
+    DOMAIN,
+    ROUTER_TYPE_DECO,
+    ROUTER_TYPE_NONE,
+    ROUTER_TYPE_UNIFI,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Step 1: Choose router type."""
         errors: dict[str, str] = {}
 
@@ -72,7 +72,7 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_ROUTER_TYPE, default=ROUTER_TYPE_DECO): vol.In(
                     {
-                        ROUTER_TYPE_DECO: "TP-Link Deco (local API)",
+                        ROUTER_TYPE_DECO: "TP-Link Deco (direct local API)",
                         ROUTER_TYPE_UNIFI: "UniFi (bridge via HA integration)",
                         ROUTER_TYPE_NONE: "None (CSI / vacuum only)",
                     }
@@ -83,7 +83,7 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_router(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Step 2: Deco router credentials."""
         errors: dict[str, str] = {}
 
@@ -97,7 +97,8 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_ROUTER_PASSWORD] = "password_required"
             else:
                 # Quick connectivity test
-                from .clients.deco import DecoClient  # noqa: PLC0415
+                from .clients.deco import DecoClient
+
                 client = DecoClient(
                     host=host,
                     username=user_input.get(CONF_ROUTER_USERNAME, "admin"),
@@ -112,16 +113,16 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_ROUTER_HOST, description={"suggested_value": "192.168.0.1"}): str,
+                vol.Required(
+                    CONF_ROUTER_HOST, description={"suggested_value": "192.168.0.1"}
+                ): str,
                 vol.Optional(CONF_ROUTER_USERNAME, default="admin"): str,
                 vol.Required(CONF_ROUTER_PASSWORD): str,
             }
         )
-        return self.async_show_form(
-            step_id="router", data_schema=schema, errors=errors
-        )
+        return self.async_show_form(step_id="router", data_schema=schema, errors=errors)
 
-    def _create_entry(self) -> FlowResult:
+    def _create_entry(self) -> ConfigFlowResult:
         """Create the config entry."""
         title = "WiFiSense Mapper"
         router_type = self._data.get(CONF_ROUTER_TYPE, ROUTER_TYPE_NONE)
@@ -134,7 +135,9 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "WiFiSenseOptionsFlow":
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> WiFiSenseOptionsFlow:
         return WiFiSenseOptionsFlow(config_entry)
 
 
@@ -146,7 +149,7 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Options: polling interval, anomaly threshold, heatmap toggle."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -169,7 +172,9 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 ): bool,
                 vol.Optional(
                     CONF_ANOMALY_THRESHOLD,
-                    default=current.get(CONF_ANOMALY_THRESHOLD, DEFAULT_ANOMALY_THRESHOLD),
+                    default=current.get(
+                        CONF_ANOMALY_THRESHOLD, DEFAULT_ANOMALY_THRESHOLD
+                    ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=10.0)),
                 vol.Optional(
                     CONF_BASELINE_DAYS,
@@ -186,7 +191,8 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
     def _discover_vacuum_entity_ids(self) -> list[str]:
         """Return entity IDs of vacuum map image/camera entities."""
         try:
-            from .vacuum_helpers import discover_vacuum_maps  # noqa: PLC0415
+            from .vacuum_helpers import discover_vacuum_maps
+
             sources = discover_vacuum_maps(self.hass)
             return [s.entity_id for s in sources]
         except Exception:  # noqa: BLE001

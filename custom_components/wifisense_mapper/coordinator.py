@@ -18,36 +18,38 @@ Thread safety:
   rendering, router polling via tplinkrouterc6u) run in threads but
   only produce data that is consumed after they return.
 """
+
 from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .clients.base import APStats, ClientInfo
+from .const import (
+    DEFAULT_ANOMALY_THRESHOLD,
+    DEFAULT_GRID_RESOLUTION,
+    DEFAULT_POLL_INTERVAL,
+    DOMAIN,
+    LAYER_ANOMALY,
+    LAYER_MOTION,
+    LAYER_SIGNAL,
+    LAYER_VARIANCE,
+)
 from .csi_discovery import CSINodeInfo, discover_csi_nodes
 from .engine.baseline import BaselineLearner
 from .engine.grid import SpatialGrid
 from .engine.heatmap import HeatmapRenderer
 from .engine.vacuum_align import VacuumMapAligner
-from .const import (
-    DOMAIN,
-    DEFAULT_POLL_INTERVAL,
-    DEFAULT_ANOMALY_THRESHOLD,
-    DEFAULT_GRID_RESOLUTION,
-    LAYER_SIGNAL,
-    LAYER_VARIANCE,
-    LAYER_MOTION,
-    LAYER_ANOMALY,
-)
-from .registry_helpers import build_floor_area_map, get_all_floors, get_floor_for_area
-from .vacuum_helpers import VacuumMapSource, async_fetch_map_image, discover_vacuum_maps
+from .registry_helpers import get_all_floors, get_floor_for_area
+from .vacuum_helpers import VacuumMapSource, discover_vacuum_maps
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
+
     from .clients.base import RouterClient
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,8 +61,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(
         self,
         hass: HomeAssistant,
-        entry: "ConfigEntry",
-        router_client: "RouterClient | None",
+        entry: ConfigEntry,
+        router_client: RouterClient | None,
     ) -> None:
         poll_interval = entry.options.get(
             "poll_interval",
@@ -71,7 +73,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             name=DOMAIN,
             update_interval=timedelta(seconds=poll_interval),
+            config_entry=entry,
         )
+
         self.entry = entry
         self.router_client = router_client
 
@@ -81,8 +85,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.heatmap_enabled: bool = entry.options.get("heatmap_enabled", True)
 
         # Live data
-        self.router_clients: dict[str, ClientInfo] = {}   # mac → ClientInfo
-        self.ap_stats: dict[str, APStats] = {}            # mac → APStats
+        self.router_clients: dict[str, ClientInfo] = {}  # mac → ClientInfo
+        self.ap_stats: dict[str, APStats] = {}  # mac → APStats
         self.csi_nodes: list[CSINodeInfo] = []
         self.vacuum_sources: list[VacuumMapSource] = []
 
@@ -173,7 +177,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.debug(
             "Coordinator update complete: %d clients, %d CSI nodes, %d floors",
-            len(self.router_clients), len(self.csi_nodes), len(self.grids),
+            len(self.router_clients),
+            len(self.csi_nodes),
+            len(self.grids),
         )
 
         return self._current_data(anomaly_scores=anomaly_scores)
@@ -225,9 +231,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ─── Heatmap rendering ────────────────────────────────────────────────────
 
-    async def _async_render_heatmaps(
-        self, anomaly_scores: dict[str, dict]
-    ) -> None:
+    async def _async_render_heatmaps(self, anomaly_scores: dict[str, dict]) -> None:
         """Render all heatmap layers for all floors in executor threads."""
         for floor_id, grid in self.grids.items():
             if not grid.all_cells():
@@ -256,7 +260,12 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         )
                     layers[layer] = png
                 except Exception as exc:  # noqa: BLE001
-                    _LOGGER.debug("Heatmap render failed for floor=%s layer=%s: %s", floor_id, layer, exc)
+                    _LOGGER.debug(
+                        "Heatmap render failed for floor=%s layer=%s: %s",
+                        floor_id,
+                        layer,
+                        exc,
+                    )
 
             self.heatmap_images[floor_id] = layers
 
@@ -280,9 +289,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if floor:
                     node.floor_id = floor.floor_id
 
-    def _current_data(
-        self, anomaly_scores: dict | None = None
-    ) -> dict[str, Any]:
+    def _current_data(self, anomaly_scores: dict | None = None) -> dict[str, Any]:
         """Return the coordinator's data snapshot for entity polling."""
         return {
             "router_clients": self.router_clients,

@@ -24,6 +24,7 @@ Limitations:
   - Mesh roaming and channel switches on nearby APs can temporarily
     affect CSI readings on ESP32 nodes.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,7 +40,6 @@ from .const import (
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from homeassistant.helpers.entity_registry import RegistryEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,14 +76,14 @@ class CSINodeInfo:
     """All entity IDs associated with this CSI device."""
 
 
-def discover_csi_nodes(hass: "HomeAssistant") -> list[CSINodeInfo]:
+def discover_csi_nodes(hass: HomeAssistant) -> list[CSINodeInfo]:
     """Scan registries and return discovered CSI nodes.
 
     This is a synchronous helper that reads from in-memory registries;
     it is safe to call from within the HA event loop.
     """
-    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
-    from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
 
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
@@ -104,12 +104,14 @@ def discover_csi_nodes(hass: "HomeAssistant") -> list[CSINodeInfo]:
         device_id = entry.device_id
 
         # For MQTT entities, check topic patterns if device_id missing
+        if (
+            entry.platform == "mqtt"
+            and not device_id
+            and not any(p.search(entry.unique_id or "") for p in mqtt_topic_re)
+            and not any(p.search(entry.entity_id) for p in mqtt_topic_re)
+        ):
+            continue
         if entry.platform == "mqtt" and not device_id:
-            unique_id = entry.unique_id or ""
-            if not any(p.search(unique_id) for p in mqtt_topic_re):
-                # Also check entity_id itself
-                if not any(p.search(entry.entity_id) for p in mqtt_topic_re):
-                    continue
             # Use unique_id as a surrogate device key
             device_id = f"mqtt__{entry.unique_id or entry.entity_id}"
 
@@ -135,25 +137,33 @@ def discover_csi_nodes(hass: "HomeAssistant") -> list[CSINodeInfo]:
         entity_name_lower = (entry.name or entry.original_name or "").lower()
         entity_id_lower = entry.entity_id.lower()
 
-        if any(p.search(entity_name_lower) or p.search(entity_id_lower) for p in score_re):
+        if any(
+            p.search(entity_name_lower) or p.search(entity_id_lower) for p in score_re
+        ):
             node.motion_score_entity_id = entry.entity_id
             _LOGGER.debug(
                 "CSI score entity found: %s (device: %s)", entry.entity_id, node.name
             )
-        elif any(p.search(entity_name_lower) or p.search(entity_id_lower) for p in motion_re):
+        elif any(
+            p.search(entity_name_lower) or p.search(entity_id_lower) for p in motion_re
+        ):
             if "presence" in entity_name_lower or "presence" in entity_id_lower:
                 node.presence_entity_id = entry.entity_id
             else:
                 node.motion_detected_entity_id = entry.entity_id
             _LOGGER.debug(
                 "CSI motion/presence entity found: %s (device: %s)",
-                entry.entity_id, node.name,
+                entry.entity_id,
+                node.name,
             )
 
     # Filter: keep only nodes that have at least one useful CSI entity
     useful_nodes = [
-        n for n in device_nodes.values()
-        if n.motion_score_entity_id or n.motion_detected_entity_id or n.presence_entity_id
+        n
+        for n in device_nodes.values()
+        if n.motion_score_entity_id
+        or n.motion_detected_entity_id
+        or n.presence_entity_id
     ]
 
     _LOGGER.info("CSI discovery complete: found %d node(s)", len(useful_nodes))

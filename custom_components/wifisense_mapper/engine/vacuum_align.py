@@ -25,11 +25,12 @@ Limitations:
   - Calibration drift: if the vacuum re-generates its map, pixel
     coordinates may shift and recalibration will be needed.
 """
+
 from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,10 +71,17 @@ class AffineTransform:
         return (col, row)
 
     def to_dict(self) -> dict[str, float]:
-        return {"a": self.a, "b": self.b, "tx": self.tx, "c": self.c, "d": self.d, "ty": self.ty}
+        return {
+            "a": self.a,
+            "b": self.b,
+            "tx": self.tx,
+            "c": self.c,
+            "d": self.d,
+            "ty": self.ty,
+        }
 
     @classmethod
-    def from_dict(cls, data: dict[str, float]) -> "AffineTransform":
+    def from_dict(cls, data: dict[str, float]) -> AffineTransform:
         return cls(
             a=data.get("a", 1.0),
             b=data.get("b", 0.0),
@@ -96,9 +104,7 @@ def _solve_affine(
     """
     n = len(points)
     if n < 3:
-        _LOGGER.warning(
-            "Cannot compute affine transform: need ≥3 points, got %d", n
-        )
+        _LOGGER.warning("Cannot compute affine transform: need ≥3 points, got %d", n)
         return None
 
     # Build matrix A (n × 3) and vectors bx, by
@@ -161,12 +167,18 @@ def _solve_affine(
     params_y = solve_3x3(ATA, ATby)
 
     if params_x is None or params_y is None:
-        _LOGGER.error("Affine transform: singular matrix — collinear calibration points?")
+        _LOGGER.error(
+            "Affine transform: singular matrix — collinear calibration points?"
+        )
         return None
 
     return AffineTransform(
-        a=params_x[0], b=params_x[1], tx=params_x[2],
-        c=params_y[0], d=params_y[1], ty=params_y[2],
+        a=params_x[0],
+        b=params_x[1],
+        tx=params_x[2],
+        c=params_y[0],
+        d=params_y[1],
+        ty=params_y[2],
     )
 
 
@@ -188,17 +200,22 @@ class VacuumMapAligner:
     ) -> None:
         """Add a correspondence point and recompute the transform."""
         self._calibration_points.append(
-            CalibrationPoint(vac_px=vac_px, vac_py=vac_py, grid_col=grid_col, grid_row=grid_row)
+            CalibrationPoint(
+                vac_px=vac_px, vac_py=vac_py, grid_col=grid_col, grid_row=grid_row
+            )
         )
         if len(self._calibration_points) >= 3:
             self._transform = _solve_affine(self._calibration_points)
             if self._transform:
                 _LOGGER.info(
                     "Vacuum aligner for floor %s calibrated with %d points",
-                    self.floor_id, len(self._calibration_points),
+                    self.floor_id,
+                    len(self._calibration_points),
                 )
 
-    def transform_point(self, vac_px: float, vac_py: float) -> tuple[float, float] | None:
+    def transform_point(
+        self, vac_px: float, vac_py: float
+    ) -> tuple[float, float] | None:
         """Map vacuum pixel → WiFi grid (col, row). Returns None if not calibrated."""
         if self._transform is None:
             return None
@@ -224,8 +241,10 @@ class VacuumMapAligner:
             "floor_id": self.floor_id,
             "calibration_points": [
                 {
-                    "vac_px": p.vac_px, "vac_py": p.vac_py,
-                    "grid_col": p.grid_col, "grid_row": p.grid_row,
+                    "vac_px": p.vac_px,
+                    "vac_py": p.vac_py,
+                    "grid_col": p.grid_col,
+                    "grid_row": p.grid_row,
                 }
                 for p in self._calibration_points
             ],
@@ -233,7 +252,7 @@ class VacuumMapAligner:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "VacuumMapAligner":
+    def from_dict(cls, data: dict[str, Any]) -> VacuumMapAligner:
         aligner = cls(floor_id=data["floor_id"])
         for pt in data.get("calibration_points", []):
             aligner._calibration_points.append(CalibrationPoint(**pt))

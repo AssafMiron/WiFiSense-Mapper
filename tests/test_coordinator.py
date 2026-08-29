@@ -1,12 +1,14 @@
 """Tests for the WiFiSense Mapper coordinator."""
+
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.wifisense_mapper.coordinator import WiFiSenseCoordinator
-from custom_components.wifisense_mapper.engine.grid import SpatialGrid
 from custom_components.wifisense_mapper.engine.baseline import BaselineLearner
+from custom_components.wifisense_mapper.engine.grid import SpatialGrid
 
 
 @pytest.mark.asyncio
@@ -81,8 +83,12 @@ async def test_coordinator_router_failure_graceful(
     hass.async_add_executor_job = AsyncMock(return_value=b"PNG")
     hass.states.get = MagicMock(return_value=None)
 
-    mock_deco_client.async_get_clients = AsyncMock(side_effect=Exception("Connection dropped"))
-    mock_deco_client.async_get_ap_stats = AsyncMock(side_effect=Exception("Connection dropped"))
+    mock_deco_client.async_get_clients = AsyncMock(
+        side_effect=Exception("Connection dropped")
+    )
+    mock_deco_client.async_get_ap_stats = AsyncMock(
+        side_effect=Exception("Connection dropped")
+    )
 
     coord = WiFiSenseCoordinator(hass, mock_config_entry_deco, mock_deco_client)
     coord.grids["g1"] = SpatialGrid("g1")
@@ -95,16 +101,18 @@ async def test_coordinator_router_failure_graceful(
     assert len(data["router_clients"]) == 0
 
 
-def test_resolve_floor_for_client_uses_ap(
-    mock_config_entry_no_router, mock_ap_stats
-):
+def test_resolve_floor_for_client_uses_ap(mock_config_entry_no_router, mock_ap_stats):
     """Test floor resolution uses AP floor_id when client floor_id is absent."""
     hass = MagicMock()
     coord = WiFiSenseCoordinator(hass, mock_config_entry_no_router, None)
     coord.grids["ground_floor"] = SpatialGrid("ground_floor")
 
     # Set up AP with floor
-    from custom_components.wifisense_mapper.clients.base import APStats, ClientInfo  # noqa: PLC0415
+    from custom_components.wifisense_mapper.clients.base import (
+        APStats,
+        ClientInfo,
+    )
+
     ap = APStats(mac="de:ad:be:ef:00:01", floor_id="ground_floor")
     coord.ap_stats["de:ad:be:ef:00:01"] = ap
 

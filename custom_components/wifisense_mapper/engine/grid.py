@@ -20,6 +20,7 @@ Position estimation:
   - Actual room-level accuracy is ~2–5 meters, depending on node
     density and building materials. This is NOT precision positioning.
 """
+
 from __future__ import annotations
 
 import logging
@@ -71,7 +72,9 @@ class GridCell:
         if len(self.rssi_samples) < 2:
             return 0.0
         mean = self.mean_rssi or 0.0
-        return sum((r - mean) ** 2 for _, r in self.rssi_samples) / len(self.rssi_samples)
+        return sum((r - mean) ** 2 for _, r in self.rssi_samples) / len(
+            self.rssi_samples
+        )
 
     @property
     def mean_csi_score(self) -> float | None:
@@ -98,7 +101,7 @@ class GridCell:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "GridCell":
+    def from_dict(cls, data: dict[str, Any]) -> GridCell:
         """Deserialize cell from dict."""
         cell = cls(x=data["x"], y=data["y"])
         cell.rssi_samples = [tuple(s) for s in data.get("rssi_samples", [])]  # type: ignore[misc]
@@ -250,17 +253,21 @@ class SpatialGrid:
 
     def to_rssi_matrix(self) -> list[list[float | None]]:
         """Return full grid as rows×cols matrix of mean RSSI values (pure Python)."""
-        matrix = [[None] * self.cols for _ in range(self.rows)]
+        matrix: list[list[float | None]] = [
+            [None] * self.cols for _ in range(self.rows)
+        ]
         for (col, row), cell in self._cells.items():
-            matrix[row][col] = cell.mean_rssi  # type: ignore[call-overload]
-        return matrix  # type: ignore[return-value]
+            matrix[row][col] = cell.mean_rssi
+        return matrix
 
     def to_csi_matrix(self) -> list[list[float | None]]:
         """Return full grid as rows×cols matrix of mean CSI scores (pure Python)."""
-        matrix = [[None] * self.cols for _ in range(self.rows)]
+        matrix: list[list[float | None]] = [
+            [None] * self.cols for _ in range(self.rows)
+        ]
         for (col, row), cell in self._cells.items():
-            matrix[row][col] = cell.mean_csi_score  # type: ignore[call-overload]
-        return matrix  # type: ignore[return-value]
+            matrix[row][col] = cell.mean_csi_score
+        return matrix
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize grid to dict for HA storage."""
@@ -275,7 +282,7 @@ class SpatialGrid:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SpatialGrid":
+    def from_dict(cls, data: dict[str, Any]) -> SpatialGrid:
         """Deserialize grid from storage dict."""
         grid = cls(
             floor_id=data["floor_id"],

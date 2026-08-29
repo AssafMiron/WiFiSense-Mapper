@@ -22,6 +22,7 @@ If the unifi integration is not loaded, this client returns empty lists
 and logs a warning — it does NOT fall back to direct HTTP to avoid
 credential duplication.
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,17 +39,14 @@ _LOGGER = logging.getLogger(__name__)
 class UniFiClient(RouterClient):
     """Reads UniFi client data by bridging the existing unifi HA integration."""
 
-    def __init__(self, hass: "HomeAssistant") -> None:
+    def __init__(self, hass: HomeAssistant) -> None:
         # No credentials needed — we read from HA state machine
         super().__init__(host="", username="", password="")
         self._hass = hass
 
     async def async_connect(self) -> bool:
         """Check that the unifi integration is loaded."""
-        from homeassistant.loader import async_get_loaded_integrations  # noqa: PLC0415
-
-        loaded = async_get_loaded_integrations(self._hass)
-        if "unifi" not in loaded:
+        if "unifi" not in self._hass.config.components:
             _LOGGER.warning(
                 "UniFi integration not loaded. WiFiSense Mapper will not receive "
                 "UniFi client data. Install and configure the UniFi integration first."
@@ -86,8 +84,7 @@ class UniFiClient(RouterClient):
                     hostname=attrs.get("hostname") or attrs.get("friendly_name"),
                     # UniFi tracker entities may include rssi in attributes
                     rssi=attrs.get("rssi") or attrs.get("signal"),
-                    ap_mac=self.normalize_mac(attrs.get("ap_mac", "") or "")
-                    or None,
+                    ap_mac=self.normalize_mac(attrs.get("ap_mac", "") or "") or None,
                     ssid=attrs.get("ssid") or attrs.get("network"),
                     band=attrs.get("band"),
                     extra={

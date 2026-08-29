@@ -26,16 +26,17 @@ Persistence:
   survives restarts. The learning window defaults to 7 days; older
   samples are discarded from the EWMA state (not from the grid itself).
 """
+
 from __future__ import annotations
 
 import logging
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .grid import GridCell, SpatialGrid
+    from .grid import SpatialGrid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class CellBaseline:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CellBaseline":
+    def from_dict(cls, data: dict[str, Any]) -> CellBaseline:
         bl = cls()
         bl.ewma_rssi = data.get("ewma_rssi")
         bl.ewma_csi = data.get("ewma_csi")
@@ -102,7 +103,9 @@ class CellBaseline:
         return bl
 
 
-def _ewma_update(prev: float | None, new_val: float, alpha: float = EWMA_ALPHA) -> float:
+def _ewma_update(
+    prev: float | None, new_val: float, alpha: float = EWMA_ALPHA
+) -> float:
     """Update an EWMA estimate with a new observation."""
     if prev is None:
         return new_val
@@ -130,7 +133,7 @@ class BaselineLearner:
         """True after enough samples for reliable anomaly detection (≥ 100)."""
         return self._sample_count >= 100
 
-    def update_from_grid(self, grid: "SpatialGrid") -> None:
+    def update_from_grid(self, grid: SpatialGrid) -> None:
         """Incorporate latest grid cell values into the baseline EWMA."""
         for cell in grid.all_cells():
             key = (cell.x, cell.y)
@@ -143,15 +146,11 @@ class BaselineLearner:
 
             if rssi is not None:
                 bl.ewma_rssi = _ewma_update(bl.ewma_rssi, rssi, self.alpha)
-                bl.ewma_sq_rssi = _ewma_update(
-                    bl.ewma_sq_rssi, rssi**2, self.alpha
-                )
+                bl.ewma_sq_rssi = _ewma_update(bl.ewma_sq_rssi, rssi**2, self.alpha)
 
             if csi is not None:
                 bl.ewma_csi = _ewma_update(bl.ewma_csi, csi, self.alpha)
-                bl.ewma_sq_csi = _ewma_update(
-                    bl.ewma_sq_csi, csi**2, self.alpha
-                )
+                bl.ewma_sq_csi = _ewma_update(bl.ewma_sq_csi, csi**2, self.alpha)
 
             bl.sample_count += 1
             bl.last_updated = time.time()
@@ -160,7 +159,7 @@ class BaselineLearner:
 
     def compute_anomaly_scores(
         self,
-        grid: "SpatialGrid",
+        grid: SpatialGrid,
         use_csi: bool = True,
         use_rssi: bool = True,
     ) -> dict[tuple[int, int], float]:
@@ -192,9 +191,7 @@ class BaselineLearner:
 
         return scores
 
-    def max_anomaly_score(
-        self, scores: dict[tuple[int, int], float]
-    ) -> float:
+    def max_anomaly_score(self, scores: dict[tuple[int, int], float]) -> float:
         """Return the maximum anomaly score across all cells."""
         return max(scores.values(), default=0.0)
 
@@ -231,13 +228,12 @@ class BaselineLearner:
             "sample_count": self._sample_count,
             "learning_start": self._learning_start,
             "baselines": {
-                f"{x},{y}": bl.to_dict()
-                for (x, y), bl in self._baselines.items()
+                f"{x},{y}": bl.to_dict() for (x, y), bl in self._baselines.items()
             },
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BaselineLearner":
+    def from_dict(cls, data: dict[str, Any]) -> BaselineLearner:
         """Deserialize baseline state from HA storage."""
         learner = cls(
             floor_id=data["floor_id"],

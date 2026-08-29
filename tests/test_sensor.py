@@ -1,17 +1,18 @@
 """Tests for WiFiSense Mapper sensor entities."""
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
-from custom_components.wifisense_mapper.clients.base import ClientInfo, APStats
+import pytest
+
 from custom_components.wifisense_mapper.coordinator import WiFiSenseCoordinator
 from custom_components.wifisense_mapper.engine.baseline import BaselineLearner
 from custom_components.wifisense_mapper.engine.grid import SpatialGrid
 from custom_components.wifisense_mapper.sensor import (
-    WifiClientCountSensor,
-    RSSISignalSensor,
     AnomalyScoreSensor,
+    RSSISignalSensor,
+    WifiClientCountSensor,
 )
 
 
@@ -72,14 +73,20 @@ class TestWifiClientCountSensor:
         coord.data["ap_stats"] = aps
 
         sensor = WifiClientCountSensor(
-            coord, mock_config_entry_no_router, "ground_floor", "Ground Floor", MagicMock()
+            coord,
+            mock_config_entry_no_router,
+            "ground_floor",
+            "Ground Floor",
+            MagicMock(),
         )
         # All APs on same floor → all 3 clients counted
         assert sensor.native_value == 3
 
 
 class TestRSSISignalSensor:
-    def test_average_rssi_for_ap(self, mock_config_entry_no_router, mock_router_clients):
+    def test_average_rssi_for_ap(
+        self, mock_config_entry_no_router, mock_router_clients
+    ):
         ap_mac = "de:ad:be:ef:00:01"
         # Clients associated to this AP: rssi -55 and -88
         clients = {c.mac: c for c in mock_router_clients}
@@ -96,7 +103,11 @@ class TestRSSISignalSensor:
     def test_returns_none_when_no_clients(self, mock_config_entry_no_router):
         coord = _make_coordinator(mock_config_entry_no_router)
         sensor = RSSISignalSensor(
-            coord, mock_config_entry_no_router, "ff:ff:ff:ff:ff:ff", "Empty AP", MagicMock()
+            coord,
+            mock_config_entry_no_router,
+            "ff:ff:ff:ff:ff:ff",
+            "Empty AP",
+            MagicMock(),
         )
         assert sensor.native_value is None
 
@@ -107,18 +118,28 @@ class TestAnomalyScoreSensor:
         coord.data["anomaly_scores"] = {"ground_floor": {(0, 0): 5.0}}
 
         sensor = AnomalyScoreSensor(
-            coord, mock_config_entry_no_router, "ground_floor", "Ground Floor", MagicMock()
+            coord,
+            mock_config_entry_no_router,
+            "ground_floor",
+            "Ground Floor",
+            MagicMock(),
         )
         # Baseline not warmed up → should still report score
         # (score reporting doesn't require warm-up, only binary anomaly does)
         # The sensor returns the max score regardless
         value = sensor.native_value
-        assert value is not None or value is None  # either is valid; just confirm no exception
+        assert (
+            value is not None or value is None
+        )  # either is valid; just confirm no exception
 
     def test_extra_attributes_include_baseline_state(self, mock_config_entry_no_router):
         coord = _make_coordinator(mock_config_entry_no_router)
         sensor = AnomalyScoreSensor(
-            coord, mock_config_entry_no_router, "ground_floor", "Ground Floor", MagicMock()
+            coord,
+            mock_config_entry_no_router,
+            "ground_floor",
+            "Ground Floor",
+            MagicMock(),
         )
         attrs = sensor.extra_state_attributes
         assert "floor_id" in attrs

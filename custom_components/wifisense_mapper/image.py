@@ -14,6 +14,7 @@ One entity is created per floor × layer combination:
 
 Images update after each coordinator refresh cycle.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, HEATMAP_LAYERS, MANUFACTURER, MODEL
+from .const import DOMAIN, HEATMAP_LAYERS
 from .coordinator import WiFiSenseCoordinator
 from .sensor import _floor_device_info, _get_floor_name
 

@@ -1,4 +1,5 @@
 """WiFiSense Mapper — Router Client Base."""
+
 from __future__ import annotations
 
 import logging

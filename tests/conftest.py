@@ -3,28 +3,37 @@
 Uses pytest-homeassistant-custom-component for HA integration testing.
 All fixtures follow the HA custom component testing conventions.
 """
+
 from __future__ import annotations
 
+pytest_plugins = ["pytest_homeassistant_custom_component"]
+
+
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Any
-
 from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
 
+from custom_components.wifisense_mapper.clients.base import APStats, ClientInfo
 from custom_components.wifisense_mapper.const import (
+    CONF_ROUTER_HOST,
+    CONF_ROUTER_PASSWORD,
+    CONF_ROUTER_TYPE,
     DOMAIN,
     ROUTER_TYPE_DECO,
     ROUTER_TYPE_NONE,
-    CONF_ROUTER_TYPE,
-    CONF_ROUTER_HOST,
-    CONF_ROUTER_PASSWORD,
 )
-from custom_components.wifisense_mapper.clients.base import ClientInfo, APStats
 from custom_components.wifisense_mapper.csi_discovery import CSINodeInfo
 
 
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations: None):
+    """Enable custom integrations in Home Assistant tests."""
+    yield
+
+
 # ─── Synthetic telemetry fixtures ─────────────────────────────────────────────
+
 
 @pytest.fixture
 def mock_router_clients() -> list[ClientInfo]:
@@ -109,31 +118,36 @@ def mock_csi_nodes() -> list[CSINodeInfo]:
     return [node1, node2]
 
 
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+
 @pytest.fixture
-def mock_config_entry_deco(hass: HomeAssistant) -> ConfigEntry:
+def mock_config_entry_deco(hass: HomeAssistant) -> MockConfigEntry:
     """Mock config entry for a Deco router setup."""
-    entry = MagicMock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_deco_001"
-    entry.domain = DOMAIN
-    entry.data = {
-        CONF_ROUTER_TYPE: ROUTER_TYPE_DECO,
-        CONF_ROUTER_HOST: "192.168.0.1",
-        CONF_ROUTER_PASSWORD: "test_password",
-    }
-    entry.options = {}
-    entry.unique_id = "wifisense_test_deco"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="test_entry_deco_001",
+        data={
+            CONF_ROUTER_TYPE: ROUTER_TYPE_DECO,
+            CONF_ROUTER_HOST: "192.168.0.1",
+            CONF_ROUTER_PASSWORD: "test_password",
+        },
+        options={},
+        unique_id="wifisense_test_deco",
+    )
     return entry
 
 
 @pytest.fixture
-def mock_config_entry_no_router(hass: HomeAssistant) -> ConfigEntry:
+def mock_config_entry_no_router(hass: HomeAssistant) -> MockConfigEntry:
     """Mock config entry for CSI/vacuum-only setup."""
-    entry = MagicMock(spec=ConfigEntry)
-    entry.entry_id = "test_entry_nrouter_001"
-    entry.domain = DOMAIN
-    entry.data = {CONF_ROUTER_TYPE: ROUTER_TYPE_NONE}
-    entry.options = {}
-    entry.unique_id = "wifisense_test_nrouter"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="test_entry_nrouter_001",
+        data={CONF_ROUTER_TYPE: ROUTER_TYPE_NONE},
+        options={},
+        unique_id="wifisense_test_nrouter",
+    )
     return entry
 
 

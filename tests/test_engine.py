@@ -1,26 +1,26 @@
 """Tests for the spatial engine: grid, heatmap, baseline, vacuum aligner."""
+
 from __future__ import annotations
 
 import time
+
 import pytest
 
-from custom_components.wifisense_mapper.engine.grid import SpatialGrid, GridCell
+from custom_components.wifisense_mapper.engine.baseline import (
+    BaselineLearner,
+)
+from custom_components.wifisense_mapper.engine.grid import SpatialGrid
 from custom_components.wifisense_mapper.engine.heatmap import (
     HeatmapRenderer,
     _interpolate_idw,
     _normalize,
-    _colormap_lookup,
-    COLORMAPS,
 )
-from custom_components.wifisense_mapper.engine.baseline import BaselineLearner, EWMA_ALPHA
 from custom_components.wifisense_mapper.engine.vacuum_align import (
     VacuumMapAligner,
-    CalibrationPoint,
-    _solve_affine,
 )
 
-
 # ─── Grid tests ────────────────────────────────────────────────────────────────
+
 
 class TestSpatialGrid:
     def test_grid_creation(self):
@@ -77,6 +77,7 @@ class TestSpatialGrid:
 
 # ─── Heatmap tests ─────────────────────────────────────────────────────────────
 
+
 class TestIDWInterpolation:
     def test_known_cells_preserved(self):
         matrix = [[None, None], [None, 5.0]]
@@ -130,6 +131,7 @@ class TestHeatmapRenderer:
 
 
 # ─── Baseline learner tests ────────────────────────────────────────────────────
+
 
 class TestBaselineLearner:
     def _make_stable_grid(self) -> SpatialGrid:
@@ -203,6 +205,7 @@ class TestBaselineLearner:
 
 # ─── Vacuum aligner tests ──────────────────────────────────────────────────────
 
+
 class TestVacuumMapAligner:
     def _calibrated_aligner(self) -> VacuumMapAligner:
         """Return aligner with 4 calibration points (identity-like transform)."""
@@ -243,5 +246,5 @@ class TestVacuumMapAligner:
         data = aligner.to_dict()
         restored = VacuumMapAligner.from_dict(data)
         assert restored.is_calibrated
-        col, row = restored.transform_point(50, 50)
+        col, _ = restored.transform_point(50, 50)
         assert col == pytest.approx(5.0, abs=0.5)

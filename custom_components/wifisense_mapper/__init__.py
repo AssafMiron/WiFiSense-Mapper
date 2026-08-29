@@ -5,6 +5,7 @@ Handles:
   - async_unload_entry: Clean up coordinator and all platforms.
   - Service handlers for all wifisense_mapper.* services.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,7 +15,6 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
@@ -91,8 +91,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _save_state_periodic(_now: Any = None) -> None:
         await _save_persisted_state(hass, entry, coordinator)
 
-    from homeassistant.helpers.event import async_track_time_interval  # noqa: PLC0415
-    from datetime import timedelta  # noqa: PLC0415
+    from datetime import timedelta
+
+    from homeassistant.helpers.event import async_track_time_interval
 
     entry.async_on_unload(
         async_track_time_interval(hass, _save_state_periodic, timedelta(minutes=15))
@@ -137,7 +138,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 # ─── Router client factory ────────────────────────────────────────────────────
 
-def _build_router_client(hass: HomeAssistant, entry: ConfigEntry) -> RouterClient | None:
+
+def _build_router_client(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> RouterClient | None:
     router_type = entry.data.get(CONF_ROUTER_TYPE, "none")
     if router_type == ROUTER_TYPE_DECO:
         return DecoClient(
@@ -152,11 +156,16 @@ def _build_router_client(hass: HomeAssistant, entry: ConfigEntry) -> RouterClien
 
 # ─── Storage helpers ──────────────────────────────────────────────────────────
 
+
 def _build_stores(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Store]:
     return {
         "grids": Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_GRIDS}.{entry.entry_id}"),
-        "baselines": Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_BASELINES}.{entry.entry_id}"),
-        "calibration": Store(hass, STORAGE_VERSION, f"{STORAGE_KEY_CALIBRATION}.{entry.entry_id}"),
+        "baselines": Store(
+            hass, STORAGE_VERSION, f"{STORAGE_KEY_BASELINES}.{entry.entry_id}"
+        ),
+        "calibration": Store(
+            hass, STORAGE_VERSION, f"{STORAGE_KEY_CALIBRATION}.{entry.entry_id}"
+        ),
     }
 
 
@@ -180,18 +189,24 @@ async def _load_persisted_state(
         try:
             coordinator.baselines[floor_id] = BaselineLearner.from_dict(bd)
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Failed to restore baseline for floor %s: %s", floor_id, exc)
+            _LOGGER.warning(
+                "Failed to restore baseline for floor %s: %s", floor_id, exc
+            )
 
     calibration_data = await stores["calibration"].async_load() or {}
     for floor_id, cd in calibration_data.items():
         try:
             coordinator.aligners[floor_id] = VacuumMapAligner.from_dict(cd)
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Failed to restore calibration for floor %s: %s", floor_id, exc)
+            _LOGGER.warning(
+                "Failed to restore calibration for floor %s: %s", floor_id, exc
+            )
 
     _LOGGER.debug(
         "Loaded state: %d grids, %d baselines, %d calibrations",
-        len(coordinator.grids), len(coordinator.baselines), len(coordinator.aligners),
+        len(coordinator.grids),
+        len(coordinator.baselines),
+        len(coordinator.aligners),
     )
 
 
@@ -217,6 +232,7 @@ async def _save_persisted_state(
 
 # ─── Options update listener ──────────────────────────────────────────────────
 
+
 async def _async_options_update(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload integration when options change."""
     _LOGGER.debug("Options updated, reloading WiFiSense entry")
@@ -224,6 +240,7 @@ async def _async_options_update(hass: HomeAssistant, entry: ConfigEntry) -> None
 
 
 # ─── Service registration ─────────────────────────────────────────────────────
+
 
 def _register_services(hass: HomeAssistant) -> None:
     """Register all wifisense_mapper services."""
@@ -238,17 +255,20 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_generate_heatmap(call: ServiceCall) -> None:
         floor_id: str | None = call.data.get("floor_id")
-        layer: str = call.data.get("layer", LAYER_SIGNAL)
 
         for entry_data in hass.data.get(DOMAIN, {}).values():
             coordinator: WiFiSenseCoordinator = entry_data["coordinator"]
-            floors_to_render = [floor_id] if floor_id else list(coordinator.grids.keys())
+            floors_to_render = (
+                [floor_id] if floor_id else list(coordinator.grids.keys())
+            )
 
             for fid in floors_to_render:
                 grid = coordinator.grids.get(fid)
                 if grid is None:
                     continue
-                scores = coordinator.baselines.get(fid, BaselineLearner(fid)).compute_anomaly_scores(grid)
+                scores = coordinator.baselines.get(
+                    fid, BaselineLearner(fid)
+                ).compute_anomaly_scores(grid)
                 await coordinator._async_render_heatmaps({fid: scores})
 
             coordinator.async_update_listeners()
@@ -258,7 +278,9 @@ def _register_services(hass: HomeAssistant) -> None:
 
         for entry_data in hass.data.get(DOMAIN, {}).values():
             coordinator: WiFiSenseCoordinator = entry_data["coordinator"]
-            floors_to_reset = [floor_id] if floor_id else list(coordinator.baselines.keys())
+            floors_to_reset = (
+                [floor_id] if floor_id else list(coordinator.baselines.keys())
+            )
             for fid in floors_to_reset:
                 if fid in coordinator.baselines:
                     coordinator.baselines[fid].reset()
@@ -272,7 +294,9 @@ def _register_services(hass: HomeAssistant) -> None:
             try:
                 points_raw = json.loads(points_raw)
             except json.JSONDecodeError as exc:
-                raise HomeAssistantError(f"Invalid calibration_points JSON: {exc}") from exc
+                raise HomeAssistantError(
+                    f"Invalid calibration_points JSON: {exc}"
+                ) from exc
 
         for entry_data in hass.data.get(DOMAIN, {}).values():
             coordinator: WiFiSenseCoordinator = entry_data["coordinator"]
@@ -290,7 +314,8 @@ def _register_services(hass: HomeAssistant) -> None:
             if aligner.is_calibrated:
                 _LOGGER.info(
                     "Vacuum map calibrated for floor %s (residual=%.2f cells)",
-                    floor_id, aligner.calibration_residual(),
+                    floor_id,
+                    aligner.calibration_residual(),
                 )
             else:
                 raise HomeAssistantError(
@@ -309,7 +334,9 @@ def _register_services(hass: HomeAssistant) -> None:
                 if grid is None:
                     raise HomeAssistantError(f"No grid data for floor: {floor_id}")
                 data = grid.to_dict()
-                out_path = Path(hass.config.config_dir) / "www" / f"wifisense_{floor_id}.json"
+                out_path = (
+                    Path(hass.config.config_dir) / "www" / f"wifisense_{floor_id}.json"
+                )
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_text(json.dumps(data, indent=2))
                 _LOGGER.info("Grid JSON exported to %s", out_path)
@@ -317,8 +344,14 @@ def _register_services(hass: HomeAssistant) -> None:
                 images = coordinator.heatmap_images.get(floor_id, {})
                 png = images.get(layer)
                 if not png:
-                    raise HomeAssistantError(f"No heatmap rendered for floor={floor_id} layer={layer}")
-                out_path = Path(hass.config.config_dir) / "www" / f"wifisense_{floor_id}_{layer}.png"
+                    raise HomeAssistantError(
+                        f"No heatmap rendered for floor={floor_id} layer={layer}"
+                    )
+                out_path = (
+                    Path(hass.config.config_dir)
+                    / "www"
+                    / f"wifisense_{floor_id}_{layer}.png"
+                )
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(png)
                 _LOGGER.info("Heatmap PNG exported to %s", out_path)
@@ -345,35 +378,57 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_START_SCAN, handle_start_scan)
     hass.services.async_register(DOMAIN, SERVICE_STOP_SCAN, handle_stop_scan)
     hass.services.async_register(
-        DOMAIN, SERVICE_GENERATE_HEATMAP, handle_generate_heatmap,
-        schema=vol.Schema({
-            vol.Optional("floor_id"): cv.string,
-            vol.Optional("layer", default=LAYER_SIGNAL): vol.In(["signal", "variance", "motion", "anomaly"]),
-        }),
+        DOMAIN,
+        SERVICE_GENERATE_HEATMAP,
+        handle_generate_heatmap,
+        schema=vol.Schema(
+            {
+                vol.Optional("floor_id"): cv.string,
+                vol.Optional("layer", default=LAYER_SIGNAL): vol.In(
+                    ["signal", "variance", "motion", "anomaly"]
+                ),
+            }
+        ),
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_LEARN_BASELINE, handle_learn_baseline,
+        DOMAIN,
+        SERVICE_LEARN_BASELINE,
+        handle_learn_baseline,
         schema=vol.Schema({vol.Optional("floor_id"): cv.string}),
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_CALIBRATE_VACUUM, handle_calibrate_vacuum,
-        schema=vol.Schema({
-            vol.Required("floor_id"): cv.string,
-            vol.Required("calibration_points"): vol.Any(str, list),
-        }),
+        DOMAIN,
+        SERVICE_CALIBRATE_VACUUM,
+        handle_calibrate_vacuum,
+        schema=vol.Schema(
+            {
+                vol.Required("floor_id"): cv.string,
+                vol.Required("calibration_points"): vol.Any(str, list),
+            }
+        ),
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_EXPORT_MAP, handle_export_map,
-        schema=vol.Schema({
-            vol.Required("floor_id"): cv.string,
-            vol.Optional("format", default="png"): vol.In(["png", "json"]),
-            vol.Optional("layer", default=LAYER_SIGNAL): vol.In(["signal", "variance", "motion", "anomaly"]),
-        }),
+        DOMAIN,
+        SERVICE_EXPORT_MAP,
+        handle_export_map,
+        schema=vol.Schema(
+            {
+                vol.Required("floor_id"): cv.string,
+                vol.Optional("format", default="png"): vol.In(["png", "json"]),
+                vol.Optional("layer", default=LAYER_SIGNAL): vol.In(
+                    ["signal", "variance", "motion", "anomaly"]
+                ),
+            }
+        ),
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_LINK_NODE_AREA, handle_link_node_area,
-        schema=vol.Schema({
-            vol.Required("node_id"): cv.string,
-            vol.Required("area_id"): cv.string,
-        }),
+        DOMAIN,
+        SERVICE_LINK_NODE_AREA,
+        handle_link_node_area,
+        schema=vol.Schema(
+            {
+                vol.Required("node_id"): cv.string,
+                vol.Required("area_id"): cv.string,
+            }
+        ),
     )

@@ -9,6 +9,7 @@ Design intent:
   - Let the user's existing HA configuration drive spatial organization.
   - Provide fuzzy matching to auto-suggest node → area assignments.
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,31 +24,31 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-def get_all_floors(hass: "HomeAssistant") -> list["FloorEntry"]:
+def get_all_floors(hass: HomeAssistant) -> list[FloorEntry]:
     """Return all floors defined in Home Assistant's floor registry."""
-    from homeassistant.helpers import floor_registry as fr  # noqa: PLC0415
+    from homeassistant.helpers import floor_registry as fr
 
     reg = fr.async_get(hass)
     return list(reg.floors.values())
 
 
-def get_all_areas(hass: "HomeAssistant") -> list["AreaEntry"]:
+def get_all_areas(hass: HomeAssistant) -> list[AreaEntry]:
     """Return all areas defined in Home Assistant's area registry."""
-    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+    from homeassistant.helpers import area_registry as ar
 
     reg = ar.async_get(hass)
     return list(reg.areas.values())
 
 
-def get_areas_for_floor(hass: "HomeAssistant", floor_id: str) -> list["AreaEntry"]:
+def get_areas_for_floor(hass: HomeAssistant, floor_id: str) -> list[AreaEntry]:
     """Return all areas assigned to a specific floor."""
     return [a for a in get_all_areas(hass) if a.floor_id == floor_id]
 
 
-def get_floor_for_area(hass: "HomeAssistant", area_id: str) -> "FloorEntry | None":
+def get_floor_for_area(hass: HomeAssistant, area_id: str) -> FloorEntry | None:
     """Return the floor that contains a given area, or None."""
-    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
-    from homeassistant.helpers import floor_registry as fr  # noqa: PLC0415
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import floor_registry as fr
 
     area_reg = ar.async_get(hass)
     area = area_reg.async_get_area(area_id)
@@ -60,8 +61,8 @@ def get_floor_for_area(hass: "HomeAssistant", area_id: str) -> "FloorEntry | Non
 
 def suggest_area_for_node(
     node_name: str,
-    areas: list["AreaEntry"],
-) -> "AreaEntry | None":
+    areas: list[AreaEntry],
+) -> AreaEntry | None:
     """Fuzzy-match a CSI/router node name to the most likely area.
 
     Uses Python's SequenceMatcher for approximate string matching.
@@ -74,7 +75,7 @@ def suggest_area_for_node(
         return None
 
     name_lower = node_name.lower()
-    best_match: "AreaEntry | None" = None
+    best_match: AreaEntry | None = None
     best_score = 0.4  # Minimum similarity threshold
 
     for area in areas:
@@ -90,14 +91,16 @@ def suggest_area_for_node(
     if best_match:
         _LOGGER.debug(
             "Auto-suggested area '%s' for node '%s' (score=%.2f)",
-            best_match.name, node_name, best_score,
+            best_match.name,
+            node_name,
+            best_score,
         )
     return best_match
 
 
 def build_floor_area_map(
-    hass: "HomeAssistant",
-) -> dict[str, list["AreaEntry"]]:
+    hass: HomeAssistant,
+) -> dict[str, list[AreaEntry]]:
     """Return a dict mapping floor_id → list of AreaEntry on that floor.
 
     Areas with no floor assignment are grouped under key ''.

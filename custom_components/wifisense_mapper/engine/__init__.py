@@ -1,4 +1,5 @@
 """WiFiSense Mapper — Spatial Engine package."""
+
 from __future__ import annotations
 
 from .baseline import BaselineLearner
@@ -9,7 +10,7 @@ from .vacuum_align import VacuumMapAligner
 __all__ = [
     "BaselineLearner",
     "GridCell",
-    "SpatialGrid",
     "HeatmapRenderer",
+    "SpatialGrid",
     "VacuumMapAligner",
 ]
