@@ -23,6 +23,7 @@ WiFiSense Mapper is a **glue layer** — it fuses telemetry from your mesh route
 
 | Feature | Description |
 |---------|-------------|
+| **Auto-Discovery & 1-Click Setup** | Auto-detects configured TP-Link Deco & UniFi integrations in HA for zero-credential onboarding. |
 | **Router Telemetry** | Connects to TP-Link Deco (local API) or bridges via existing UniFi integrations. |
 | **ESP32 CSI Sensing** | Auto-discovers ESPectre and TOMMY nodes via ESPHome or MQTT for device-free motion. |
 | **HA-Native Setup** | Automatically maps to your existing Home Assistant Floors and Areas registries. |
@@ -63,7 +64,7 @@ WiFiSense Mapper is a **glue layer** — it fuses telemetry from your mesh route
 flowchart LR
     Install["1. Install via HACS"] --> Restart["2. Restart HA"]
     Restart --> Add["3. Add Integration"]
-    Add --> Config["4. Select Router & Connect"]
+    Add --> Config["4. Auto-Detect Router & 1-Click Setup"]
     Config --> Ready["5. Ready! Entities Auto-Created"]
 ```
 
@@ -82,8 +83,9 @@ cp -r custom_components/wifisense_mapper /config/custom_components/
 ### 2. Add and Configure Integration
 1. Go to **Settings → Devices & Services → Add Integration**.
 2. Search for **WiFiSense Mapper**.
-3. Follow the simple setup dialog:
-   * **TP-Link Deco**: Enter your Deco local IP and admin password (an automatic connection test is performed).
+3. Follow the setup dialog:
+   * **TP-Link Deco (Detected)**: If you already have TP-Link Deco configured in Home Assistant, select the 1-click auto-setup option to connect immediately without re-entering passwords.
+   * **TP-Link Deco (Manual)**: If configuring manually, your detected Deco IP is automatically pre-filled in the setup form.
    * **UniFi**: Automatically links via your existing UniFi Home Assistant integration (no credentials needed).
    * **None**: For setups using ESP32 CSI nodes or vacuum maps only.
 4. All sensors, presence indicators, and heatmap images will be automatically generated based on your Home Assistant Floors and Areas.
@@ -103,7 +105,7 @@ cp -r custom_components/wifisense_mapper /config/custom_components/
 
 Explore our detailed reference guides for advanced configurations and use cases:
 
-* ⚙️ **[Configuration & Services Guide](docs/configuration.md)** — Step-by-step setup, options flow settings, and automation services.
+* ⚙️ **[Configuration & Services Guide](docs/configuration.md)** — Step-by-step setup, auto-detection, options flow settings, and automation services.
 * 🏷️ **[Entities Reference](docs/entities.md)** — Full list of binary sensors, sensors, image heatmaps, and device trackers.
 * 🚨 **[Connecting to HA Security Alarms](docs/security-alarms.md)** — How to use WiFi sensing as an intrusion alarm for Alarmo or Manual Alarm.
 * 🛠️ **[Troubleshooting & Calibration Guide](docs/troubleshooting.md)** — Searchable solutions for common issues, node placement tips, and vacuum calibration.

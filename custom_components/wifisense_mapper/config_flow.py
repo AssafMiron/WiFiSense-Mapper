@@ -28,6 +28,12 @@ from .const import (
     ROUTER_TYPE_NONE,
     ROUTER_TYPE_UNIFI,
 )
+from .router_discovery import (
+    DiscoveredRouter,
+    discover_all_routers,
+    find_discovered_router,
+    get_first_discovered_router_of_type,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,8 +42,8 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Multi-step config flow for WiFiSense Mapper.
 
     Steps:
-      1. user   — Router type selection
-      2. router — Router credentials (skipped for UniFi/None)
+      1. user   — Router type selection (with auto-detection & 1-click setup)
+      2. router — Router credentials (skipped for 1-click auto setup, UniFi, or None)
       3. done   — Create entry (vacuum & area links go to Options Flow)
     """
 
@@ -45,14 +51,54 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
+        self._discovered_routers: list[DiscoveredRouter] = []
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: Choose router type."""
+        """Step 1: Choose router type or select an auto-detected router integration."""
         errors: dict[str, str] = {}
+        self._discovered_routers = discover_all_routers(self.hass)
 
         if user_input is not None:
+            chosen = user_input.get(CONF_ROUTER_TYPE, ROUTER_TYPE_NONE)
+
+            # Check if user chose an auto-detected router (1-Click Auto Setup)
+            if chosen.startswith("auto_"):
+                discovery_id = chosen.removeprefix("auto_")
+                router = find_discovered_router(self.hass, discovery_id)
+                if router:
+                    self._data[CONF_ROUTER_TYPE] = router.router_type
+                    self._data[CONF_ROUTER_HOST] = router.host
+                    self._data[CONF_ROUTER_USERNAME] = router.username
+                    self._data[CONF_ROUTER_PASSWORD] = router.password or ""
+
+                    if router.is_bridge_only:
+                        return self._create_entry()
+
+                    # Direct API (e.g. Deco) — test connection with discovered credentials
+                    if router.password:
+                        from .clients.deco import DecoClient
+
+                        client = DecoClient(
+                            host=router.host,
+                            username=router.username,
+                            password=router.password,
+                        )
+                        if await client.async_connect():
+                            await client.async_disconnect()
+                            return self._create_entry()
+                        _LOGGER.warning(
+                            "Auto-connect failed for discovered %s at %s. Falling back to manual entry.",
+                            router.title,
+                            router.host,
+                        )
+                        errors["base"] = "cannot_connect"
+
+                    # If no password was extracted or connection failed, route to manual setup with pre-filled IP
+                    return await self.async_step_router(errors=errors)
+
+            # Standard manual selections
             self._data.update(user_input)
             router_type = user_input.get(CONF_ROUTER_TYPE, ROUTER_TYPE_NONE)
 
@@ -68,33 +114,60 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # No router — CSI-only or vacuum-only mode
                 return self._create_entry()
 
+        # Build options dynamically including detected routers
+        options: dict[str, str] = {}
+        default_selection = ROUTER_TYPE_DECO
+
+        # Add 1-Click options for discovered routers
+        has_auto_option = False
+        for router in self._discovered_routers:
+            if router.router_type == ROUTER_TYPE_DECO:
+                opt_key = f"auto_{router.discovery_id}"
+                if router.password:
+                    options[opt_key] = (
+                        f"TP-Link Deco (Detected at {router.host} — 1-Click Auto Setup)"
+                    )
+                else:
+                    options[opt_key] = (
+                        f"TP-Link Deco (Detected at {router.host})"
+                    )
+                if not has_auto_option:
+                    default_selection = opt_key
+                    has_auto_option = True
+            elif router.router_type == ROUTER_TYPE_UNIFI:
+                options[ROUTER_TYPE_UNIFI] = "UniFi (Detected — bridge via HA integration)"
+
+        # Manual / Standard options
+        options[ROUTER_TYPE_DECO] = "TP-Link Deco (Manual configuration)"
+        if ROUTER_TYPE_UNIFI not in options:
+            options[ROUTER_TYPE_UNIFI] = "UniFi (bridge via HA integration)"
+        options[ROUTER_TYPE_NONE] = "None (CSI / vacuum only)"
+
         schema = vol.Schema(
             {
-                vol.Required(CONF_ROUTER_TYPE, default=ROUTER_TYPE_DECO): vol.In(
-                    {
-                        ROUTER_TYPE_DECO: "TP-Link Deco (direct local API)",
-                        ROUTER_TYPE_UNIFI: "UniFi (bridge via HA integration)",
-                        ROUTER_TYPE_NONE: "None (CSI / vacuum only)",
-                    }
+                vol.Required(CONF_ROUTER_TYPE, default=default_selection): vol.In(
+                    options
                 )
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_router(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None,
+        errors: dict[str, str] | None = None,
     ) -> ConfigFlowResult:
-        """Step 2: Deco router credentials."""
-        errors: dict[str, str] = {}
+        """Step 2: Deco router credentials with smart pre-filled defaults."""
+        step_errors: dict[str, str] = errors or {}
 
         if user_input is not None:
             host = user_input.get(CONF_ROUTER_HOST, "").strip()
             password = user_input.get(CONF_ROUTER_PASSWORD, "")
 
             if not host:
-                errors[CONF_ROUTER_HOST] = "host_required"
+                step_errors[CONF_ROUTER_HOST] = "host_required"
             elif not password:
-                errors[CONF_ROUTER_PASSWORD] = "password_required"
+                step_errors[CONF_ROUTER_PASSWORD] = "password_required"
             else:
                 # Quick connectivity test
                 from .clients.deco import DecoClient
@@ -105,22 +178,42 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     password=password,
                 )
                 if not await client.async_connect():
-                    errors["base"] = "cannot_connect"
+                    step_errors["base"] = "cannot_connect"
                 else:
                     await client.async_disconnect()
                     self._data.update(user_input)
                     return self._create_entry()
 
+        # Dynamic smart pre-fill: use detected Deco IP if available
+        suggested_host = self._data.get(CONF_ROUTER_HOST) or ""
+        suggested_username = self._data.get(CONF_ROUTER_USERNAME) or "admin"
+
+        if not suggested_host:
+            detected = get_first_discovered_router_of_type(
+                self.hass, ROUTER_TYPE_DECO
+            )
+            if detected:
+                suggested_host = detected.host
+                suggested_username = detected.username or "admin"
+            else:
+                suggested_host = "192.168.0.1"
+
         schema = vol.Schema(
             {
                 vol.Required(
-                    CONF_ROUTER_HOST, description={"suggested_value": "192.168.0.1"}
+                    CONF_ROUTER_HOST, description={"suggested_value": suggested_host}
                 ): str,
-                vol.Optional(CONF_ROUTER_USERNAME, default="admin"): str,
+                vol.Optional(
+                    CONF_ROUTER_USERNAME,
+                    default=suggested_username,
+                    description={"suggested_value": suggested_username},
+                ): str,
                 vol.Required(CONF_ROUTER_PASSWORD): str,
             }
         )
-        return self.async_show_form(step_id="router", data_schema=schema, errors=errors)
+        return self.async_show_form(
+            step_id="router", data_schema=schema, errors=step_errors
+        )
 
     def _create_entry(self) -> ConfigFlowResult:
         """Create the config entry."""
