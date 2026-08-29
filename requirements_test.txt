@@ -1,0 +1,15 @@
+# Test dependencies for WiFiSense Mapper
+pytest>=7.4
+pytest-asyncio>=0.23
+pytest-homeassistant-custom-component>=0.13
+pytest-cov>=4.1
+tplinkrouterc6u>=4.3.0
+
+# Optional (for full heatmap rendering tests)
+Pillow>=10.0
+
+# Type checking
+mypy>=1.0
+
+# Linting
+ruff>=0.4

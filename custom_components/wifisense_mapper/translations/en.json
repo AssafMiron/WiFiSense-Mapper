@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "WiFiSense Mapper — Data Sources",
+        "description": "Select your primary WiFi data source. CSI nodes (ESPectre/TOMMY) and vacuum maps can be configured in Options.",
+        "data": {
+          "router_type": "Router type"
+        }
+      },
+      "router": {
+        "title": "TP-Link Deco Configuration",
+        "description": "Enter your Deco router's local address and admin password.",
+        "data": {
+          "router_host": "Deco IP address or hostname",
+          "router_username": "Admin username",
+          "router_password": "Admin password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to router. Check the IP address and credentials.",
+      "host_required": "IP address or hostname is required.",
+      "password_required": "Password is required.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "WiFiSense Mapper is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WiFiSense Mapper Options",
+        "data": {
+          "poll_interval": "Polling interval (seconds)",
+          "heatmap_enabled": "Enable heatmap generation",
+          "anomaly_threshold": "Anomaly detection threshold (z-score)",
+          "baseline_days": "Baseline learning window (days)",
+          "vacuum_entities": "Vacuum map entities (optional)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "wifi_client_count": {"name": "WiFi Client Count"},
+      "rssi_signal": {"name": "RSSI Signal"},
+      "csi_motion_score": {"name": "CSI Motion Score"},
+      "anomaly_score": {"name": "Anomaly Score"}
+    },
+    "binary_sensor": {
+      "presence": {"name": "Presence"},
+      "object_anomaly": {"name": "Object Anomaly"},
+      "csi_motion": {"name": "CSI Motion"}
+    },
+    "image": {
+      "heatmap": {"name": "{layer} Heatmap"}
+    }
+  }
+}

@@ -1,0 +1,1 @@
+"""WiFiSense Mapper test suite."""

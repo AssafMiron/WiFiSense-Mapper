@@ -1,0 +1,83 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "WiFiSense Mapper — Data Sources",
+        "description": "Select your primary WiFi data source. CSI nodes (ESPectre/TOMMY) and vacuum maps can be configured in Options.",
+        "data": {
+          "router_type": "Router type"
+        }
+      },
+      "router": {
+        "title": "TP-Link Deco Configuration",
+        "description": "Enter your Deco router's local address and admin password.",
+        "data": {
+          "router_host": "Deco IP address or hostname",
+          "router_username": "Admin username",
+          "router_password": "Admin password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to router. Check the IP address and credentials.",
+      "host_required": "IP address or hostname is required.",
+      "password_required": "Password is required.",
+      "unknown": "Unexpected error. Check the Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "WiFiSense Mapper is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WiFiSense Mapper Options",
+        "data": {
+          "poll_interval": "Polling interval (seconds)",
+          "heatmap_enabled": "Enable heatmap generation",
+          "anomaly_threshold": "Anomaly detection threshold (z-score)",
+          "baseline_days": "Baseline learning window (days)",
+          "vacuum_entities": "Vacuum map entities (optional)"
+        },
+        "data_description": {
+          "poll_interval": "How often to poll the router and read CSI sensor states (10–3600 seconds).",
+          "anomaly_threshold": "Z-score threshold for object/furniture anomaly alerts. Higher = fewer alerts. Recommended: 3.0.",
+          "baseline_days": "Number of days of data used to establish the normal signal baseline.",
+          "vacuum_entities": "Select vacuum map image/camera entities to use for room layout validation."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "wifi_client_count": {
+        "name": "WiFi Client Count"
+      },
+      "rssi_signal": {
+        "name": "RSSI Signal"
+      },
+      "csi_motion_score": {
+        "name": "CSI Motion Score"
+      },
+      "anomaly_score": {
+        "name": "Anomaly Score"
+      }
+    },
+    "binary_sensor": {
+      "presence": {
+        "name": "Presence"
+      },
+      "object_anomaly": {
+        "name": "Object Anomaly"
+      },
+      "csi_motion": {
+        "name": "CSI Motion"
+      }
+    },
+    "image": {
+      "heatmap": {
+        "name": "{layer} Heatmap"
+      }
+    }
+  }
+}
