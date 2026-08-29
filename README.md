@@ -1,3 +1,7 @@
+<div align="center">
+
+<img src="custom_components/wifisense_mapper/brand/icon.png" width="128" alt="WiFiSense Mapper Logo" />
+
 # WiFiSense Mapper
 
 **Custom Home Assistant integration for WiFi-based room mapping, signal heatmaps, and object/furniture anomaly detection.**
@@ -5,6 +9,9 @@
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![HA version](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue)](https://www.home-assistant.io)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+</div>
+
 
 WiFiSense Mapper is a **glue layer** — it fuses telemetry from your mesh router, ESP32 CSI sensing nodes, existing Home Assistant Floors & Areas, and optional robot vacuum maps into interactive 2D heatmaps, spatial anomaly detection, and rough room-level device tracking. It does **not** replace ESPectre, TOMMY, your router integration, or Zircon3D/Floorplan. It makes them work together.
 
