@@ -137,8 +137,8 @@ class DecoDiscoveryProvider(RouterDiscoveryProvider):
             entries = hass.config_entries.async_entries(domain)
             for entry in entries:
                 # Check if this is a Deco entry (by domain or title/model)
-                data = entry.data or {}
-                options = entry.options or {}
+                data: dict[str, Any] = dict(entry.data) if entry.data else {}
+                options: dict[str, Any] = dict(entry.options) if entry.options else {}
 
                 # Look for host in entry data, options, or entry title
                 raw_host = (
