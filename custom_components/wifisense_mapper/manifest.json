@@ -1,0 +1,22 @@
+{
+  "domain": "wifisense_mapper",
+  "name": "WiFiSense Mapper",
+  "version": "0.1.0",
+  "documentation": "https://github.com/assafmiron/WiFiSense-Mapper",
+  "issue_tracker": "https://github.com/assafmiron/WiFiSense-Mapper/issues",
+  "codeowners": ["@assafmiron"],
+  "requirements": [
+    "tplinkrouterc6u>=4.3.0"
+  ],
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "integration_type": "hub",
+  "quality_scale": "custom",
+  "dependencies": [],
+  "after_dependencies": [
+    "esphome",
+    "unifi",
+    "roborock",
+    "mqtt"
+  ]
+}

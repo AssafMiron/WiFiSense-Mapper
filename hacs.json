@@ -1,0 +1,8 @@
+{
+  "name": "WiFiSense Mapper",
+  "content_in_root": false,
+  "render_readme": true,
+  "homeassistant": "2024.1.0",
+  "country": [],
+  "iot_class": "local_polling"
+}
