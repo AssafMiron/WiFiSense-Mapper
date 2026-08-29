@@ -110,3 +110,71 @@ def build_floor_area_map(
         floor_id = area.floor_id or ""
         result.setdefault(floor_id, []).append(area)
     return result
+
+
+def auto_link_ap_to_ha_device(
+    hass: HomeAssistant,
+    ap_mac: str,
+    ap_name: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Auto-link an AP/Deco node MAC or name to Home Assistant Device and Area Registries.
+
+    Returns:
+        (area_id, floor_id) tuple or (None, None) if no link could be established.
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    dev_reg = dr.async_get(hass)
+    norm_mac = ap_mac.lower().replace("-", ":").replace(".", ":")
+
+    # 1. Search HA Device Registry by MAC address in connections or identifiers
+    matched_device = None
+    for device in dev_reg.devices.values():
+        # Check connections
+        for conn_type, conn_val in device.connections:
+            if conn_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
+                matched_device = device
+                break
+        if matched_device:
+            break
+
+        # Check identifiers
+        for _, ident_val in device.identifiers:
+            if ident_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
+                matched_device = device
+                break
+        if matched_device:
+            break
+
+    # If device is found and assigned to an Area in HA
+    if matched_device and matched_device.area_id:
+        area_id = matched_device.area_id
+        floor = get_floor_for_area(hass, area_id)
+        floor_id = floor.floor_id if floor else None
+        _LOGGER.debug(
+            "Auto-matched AP %s (%s) to HA Device %s in area %s",
+            ap_mac,
+            ap_name,
+            matched_device.name,
+            area_id,
+        )
+        return (area_id, floor_id)
+
+    # 2. Fallback: Fuzzy match AP name to HA Area names
+    all_areas = get_all_areas(hass)
+    name_to_check = ap_name or (matched_device.name if matched_device else None)
+    if name_to_check:
+        suggested_area = suggest_area_for_node(name_to_check, all_areas)
+        if suggested_area:
+            floor = get_floor_for_area(hass, suggested_area.id)
+            floor_id = floor.floor_id if floor else None
+            _LOGGER.debug(
+                "Fuzzy-matched AP %s (%s) to area %s",
+                ap_mac,
+                name_to_check,
+                suggested_area.id,
+            )
+            return (suggested_area.id, floor_id)
+
+    return (None, None)
+
