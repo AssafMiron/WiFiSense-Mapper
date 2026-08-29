@@ -1,0 +1,125 @@
+start_scan:
+  name: Start WiFiSense Scan
+  description: Resume WiFi data collection and heatmap generation.
+  fields: {}
+
+stop_scan:
+  name: Stop WiFiSense Scan
+  description: Pause WiFi data collection without unloading the integration.
+  fields: {}
+
+generate_heatmap:
+  name: Generate Heatmap
+  description: Immediately trigger heatmap generation for a floor and layer.
+  fields:
+    floor_id:
+      name: Floor ID
+      description: The HA floor registry ID to generate a heatmap for. Leave empty to regenerate all floors.
+      required: false
+      example: "ground_floor"
+      selector:
+        text:
+    layer:
+      name: Layer
+      description: "Which heatmap layer to generate: signal, variance, motion, or anomaly."
+      required: false
+      default: signal
+      example: signal
+      selector:
+        select:
+          options:
+            - signal
+            - variance
+            - motion
+            - anomaly
+
+learn_baseline:
+  name: Learn Baseline
+  description: Reset and begin a fresh baseline learning period for a floor. Anomaly detection is suspended during learning.
+  fields:
+    floor_id:
+      name: Floor ID
+      description: The floor to reset the baseline for. Leave empty to reset all floors.
+      required: false
+      example: "ground_floor"
+      selector:
+        text:
+
+calibrate_vacuum_map:
+  name: Calibrate Vacuum Map
+  description: >
+    Provide calibration point pairs (vacuum pixel ↔ WiFi grid coordinate) to
+    compute the affine alignment between the vacuum map and the WiFi heatmap.
+    Requires at least 3 non-collinear point pairs.
+  fields:
+    floor_id:
+      name: Floor ID
+      description: The floor to calibrate.
+      required: true
+      example: "ground_floor"
+      selector:
+        text:
+    calibration_points:
+      name: Calibration Points
+      description: >
+        List of point correspondence objects. Each must have:
+        vac_px, vac_py (vacuum image pixel), grid_col, grid_row (WiFi grid cell).
+        Example: [{"vac_px": 120, "vac_py": 80, "grid_col": 4, "grid_row": 3}]
+      required: true
+      example: '[{"vac_px": 120, "vac_py": 80, "grid_col": 4, "grid_row": 3}]'
+      selector:
+        object:
+
+export_map:
+  name: Export Map
+  description: Export heatmap data for a floor as PNG or JSON for use in external tools.
+  fields:
+    floor_id:
+      name: Floor ID
+      description: The floor to export.
+      required: true
+      example: "ground_floor"
+      selector:
+        text:
+    format:
+      name: Format
+      description: Output format (png or json).
+      required: false
+      default: png
+      example: png
+      selector:
+        select:
+          options:
+            - png
+            - json
+    layer:
+      name: Layer
+      description: Heatmap layer to export (png format only).
+      required: false
+      default: signal
+      selector:
+        select:
+          options:
+            - signal
+            - variance
+            - motion
+            - anomaly
+
+link_node_to_area:
+  name: Link Node to Area
+  description: Manually assign a CSI or router node to a Home Assistant area.
+  fields:
+    node_id:
+      name: Node ID
+      description: The device_id or AP MAC of the node to link.
+      required: true
+      example: "abc123def456"
+      selector:
+        text:
+    area_id:
+      name: Area ID
+      description: The HA area registry ID to assign this node to.
+      required: true
+      example: "living_room"
+      selector:
+        area:
