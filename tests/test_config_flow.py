@@ -244,13 +244,24 @@ async def test_config_flow_unifi_no_credentials(hass: HomeAssistant) -> None:
 
 @pytest.mark.asyncio
 async def test_options_flow(hass: HomeAssistant, mock_config_entry_no_router) -> None:
-    """Test options flow saves updated poll interval."""
+    """Test options flow menu and general settings."""
     mock_config_entry_no_router.add_to_hass(hass)
 
     result = await hass.config_entries.options.async_init(
         mock_config_entry_no_router.entry_id
     )
-    assert result["type"] == data_entry_flow.FlowResultType.FORM
+    assert result["type"] == data_entry_flow.FlowResultType.MENU
+    assert "general" in result["menu_options"]
+    assert "ap_mapping" in result["menu_options"]
+    assert "vacuum_mapping" in result["menu_options"]
+
+    # Select general step
+    result_general = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "general"},
+    )
+    assert result_general["type"] == data_entry_flow.FlowResultType.FORM
+    assert result_general["step_id"] == "general"
 
     result2 = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -264,3 +275,38 @@ async def test_options_flow(hass: HomeAssistant, mock_config_entry_no_router) ->
     assert result2["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result2["data"]["poll_interval"] == 60
     assert result2["data"]["heatmap_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_options_flow_ap_mapping(hass: HomeAssistant, mock_config_entry_no_router) -> None:
+    """Test options flow AP and Deco placement step."""
+    from homeassistant.helpers import area_registry as ar
+
+    area_reg = ar.async_get(hass)
+    area_reg.async_create("Office")
+
+    mock_config_entry_no_router.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry_no_router,
+        options={"node_area_map": {"aa:bb:cc:dd:ee:ff": ""}},
+    )
+
+    result = await hass.config_entries.options.async_init(
+        mock_config_entry_no_router.entry_id
+    )
+    result_ap = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ap_mapping"},
+    )
+    assert result_ap["type"] == data_entry_flow.FlowResultType.FORM
+    assert result_ap["step_id"] == "ap_mapping"
+
+    # Submit AP mapping
+    result_saved = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"ap_aa_bb_cc_dd_ee_ff": "office"},
+    )
+    assert result_saved["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result_saved["data"]["node_area_map"]["aa:bb:cc:dd:ee:ff"] == "office"
+
+
