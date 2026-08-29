@@ -45,16 +45,46 @@ View live logs via **Settings → System → Logs** or search for `wifisense_map
 
 ---
 
-### 3. Heatmaps Are Blank or Not Updating
-* **Symptom**: `image.*` entities show empty or static placeholders.
+### 3. Heatmaps Are Blank, Broken, or Not Loading
+* **Symptom**: `image.*` entities show broken image icons or fail to load.
 * **Causes & Fixes**:
-  * **Heatmap Disabled**: Verify in **Configure** that *Heatmap generation* is toggled ON.
-  * **No Telemetry Yet**: The integration requires at least one active router client or CSI node to start drawing signal cells.
-  * **Pillow Library**: Check logs for `Pillow` errors. The integration automatically falls back to standard BMP rendering if Pillow is unavailable, but installing Pillow is recommended.
+  * **Pillow Requirement & Installation**:
+    * **Home Assistant OS / Supervised / Container**: Home Assistant automatically installs Pillow when WiFiSense Mapper is loaded. If it failed to install during startup, restart Home Assistant.
+    * **Home Assistant Core (Python venv)**: If running HA Core directly in a virtual environment, install Pillow manually:
+      ```bash
+      source /path/to/homeassistant/bin/activate
+      pip install Pillow>=10.0.0
+      ```
+    * **Pure Python Fallback**: WiFiSense Mapper includes a zero-dependency pure-Python PNG encoder and baseline grid generator so heatmaps remain valid PNG images even without Pillow.
+  * **Heatmap Disabled**: Verify in **Configure** that *Enable heatmap generation* is toggled ON.
+  * **Warming-Up Floor**: Floors without telemetry show a clean neutral blueprint baseline grid until devices or CSI nodes transmit signals.
 
 ---
 
-### 4. Frequent False Anomaly Alerts (`binary_sensor.*_object_anomaly`)
+### 4. Deco Hub Nearby but Area Presence is "Away"
+* **Symptom**: You are in a room (e.g. Office) with a Deco hub, but the presence sensor stays `Away`.
+* **Causes & Fixes**:
+  * **Hub Area Placement Not Configured**:
+    1. Go to **Settings → Devices & Services → WiFiSense Mapper → Configure**.
+    2. Select **Access Points & Deco Hub Placements**.
+    3. Match your Deco hub's MAC address or name to the **Office** area in Home Assistant.
+    4. Alternatively, assign the Deco device directly to the Area in Home Assistant (**Settings → Devices → TP-Link Deco → Area**). WiFiSense will automatically auto-link it.
+  * **Client Roaming**: Check `devices_detail` attribute on the Presence sensor to see which AP your phone/laptop is currently connected to and its estimated distance.
+
+---
+
+### 5. Roborock / Vacuum Room Alignment
+* **Symptom**: How to align Roborock vacuum rooms with WiFiSense areas.
+* **Guide**:
+  1. Ensure your vacuum integration (Roborock / Valetudo / Dreame) is loaded in Home Assistant.
+  2. Open **Settings → Devices & Services → WiFiSense Mapper → Configure**.
+  3. Select **Vacuum Room Alignment (Roborock / Valetudo)**.
+  4. Match each vacuum room segment (e.g., "Office", "Kitchen") to your Home Assistant Area.
+  5. Room boundaries and cleaning zones will be used to validate spatial anomalies and occupancy.
+
+---
+
+### 6. Frequent False Anomaly Alerts (`binary_sensor.*_object_anomaly`)
 * **Symptom**: Anomaly sensor frequently turns `on` when nothing in the room has changed.
 * **Causes & Fixes**:
   * **Baseline Not Warmed Up**: The statistical learner needs 48 hours to 7 days to learn daily ambient variance. Check the `baseline_warmed_up` attribute on the sensor.

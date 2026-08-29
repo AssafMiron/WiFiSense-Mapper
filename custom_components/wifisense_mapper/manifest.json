@@ -17,6 +17,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/AssafMiron/WiFiSense-Mapper/issues",
   "requirements": [
+    "Pillow>=10.0.0",
     "tplinkrouterc6u>=4.3.0"
   ],
   "version": "0.1.0"

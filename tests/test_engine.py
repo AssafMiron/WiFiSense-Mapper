@@ -128,6 +128,19 @@ class TestHeatmapRenderer:
         renderer = HeatmapRenderer(cell_scale=2)
         result = renderer.render_signal(grid)
         assert isinstance(result, bytes)
+        assert len(result) > 0
+        assert result.startswith(b"\x89PNG\r\n\x1a\n")
+
+    def test_pure_python_png_encoding(self):
+        from custom_components.wifisense_mapper.engine.heatmap import (
+            _render_png_pure_python,
+        )
+
+        pixels = [[(255, 0, 0), (0, 255, 0)], [(0, 0, 255), (255, 255, 0)]]
+        png_bytes = _render_png_pure_python(pixels, rows=2, cols=2, scale=4)
+        assert isinstance(png_bytes, bytes)
+        assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        assert png_bytes.endswith(b"IEND\xaeB`\x82")
 
 
 # ─── Baseline learner tests ────────────────────────────────────────────────────
