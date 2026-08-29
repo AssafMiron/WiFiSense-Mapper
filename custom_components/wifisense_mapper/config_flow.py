@@ -231,14 +231,11 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> WiFiSenseOptionsFlow:
-        return WiFiSenseOptionsFlow(config_entry)
+        return WiFiSenseOptionsFlow()
 
 
 class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
     """Options flow for adjusting polling, thresholds, and vacuum links."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
