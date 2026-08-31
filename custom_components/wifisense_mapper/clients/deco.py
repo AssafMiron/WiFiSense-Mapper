@@ -121,14 +121,14 @@ class DecoClient(RouterClient):
         if not nodes:
             cached = getattr(self._client, "devices", [])
             if isinstance(cached, list) and cached:
-                nodes = [n if isinstance(n, dict) else vars(n) for n in cached]
+                nodes = [dict(n) if isinstance(n, dict) else dict(vars(n)) for n in cached]
 
         if not nodes and hasattr(self._client, "get_firmware"):
             try:
                 self._client.get_firmware()
                 cached = getattr(self._client, "devices", [])
                 if isinstance(cached, list) and cached:
-                    nodes = [n if isinstance(n, dict) else vars(n) for n in cached]
+                    nodes = [dict(n) if isinstance(n, dict) else dict(vars(n)) for n in cached]
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.debug("get_firmware fallback failed: %s", exc)
 

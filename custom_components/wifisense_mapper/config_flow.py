@@ -555,12 +555,7 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         dev_reg = dr.async_get(self.hass)
         mac_to_dev_name: dict[str, str] = {}
 
-        devices_iter = (
-            dev_reg.devices
-            if not isinstance(dev_reg.devices, dict)
-            else dev_reg.devices.values()
-        )
-        for device in devices_iter:
+        for device in dev_reg.devices.values():
             dev_name = device.name_by_user or device.name
             if not dev_name:
                 continue

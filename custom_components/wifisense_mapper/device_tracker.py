@@ -79,12 +79,7 @@ async def async_setup_entry(
                 )
                 ent_reg.async_remove(entity_entry.entity_id)
 
-    devs_list = list(
-        dev_reg.devices
-        if not isinstance(dev_reg.devices, dict)
-        else dev_reg.devices.values()
-    )
-    for dev in devs_list:
+    for dev in list(dev_reg.devices.values()):
         for ident in dev.identifiers:
             if ident[0] == DOMAIN and ident[1].startswith(f"{entry.entry_id}_tracker_"):
                 mac = ident[1].replace(f"{entry.entry_id}_tracker_", "")
