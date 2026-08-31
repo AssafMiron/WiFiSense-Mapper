@@ -92,3 +92,25 @@ async def test_area_coverage_calculation(hass: HomeAssistant) -> None:
         assert summary["uncovered_count"] == 1  # garage has 0 APs
         assert "garage" in summary["uncovered_area_ids"]
         assert "living_room" in summary["cross_covered_area_ids"]
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_dump(hass: HomeAssistant, mock_config_entry_no_router) -> None:
+    """Test Home Assistant diagnostics dump for WiFiSense entry."""
+    from custom_components.wifisense_mapper.const import DOMAIN
+    from custom_components.wifisense_mapper.diagnostics import async_get_config_entry_diagnostics
+
+    mock_config_entry_no_router.add_to_hass(hass)
+    coordinator = WiFiSenseCoordinator(hass, mock_config_entry_no_router, router_client=None)
+
+    hass.data.setdefault(DOMAIN, {})[mock_config_entry_no_router.entry_id] = {
+        "coordinator": coordinator,
+    }
+
+    diag = await async_get_config_entry_diagnostics(hass, mock_config_entry_no_router)
+    assert diag["entry_id"] == mock_config_entry_no_router.entry_id
+    assert "system_health" in diag
+    assert "router_connected" in diag
+    assert "coverage_summary" in diag
+    assert "recent_logs" in diag
+

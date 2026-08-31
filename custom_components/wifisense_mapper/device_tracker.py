@@ -79,7 +79,12 @@ async def async_setup_entry(
                 )
                 ent_reg.async_remove(entity_entry.entity_id)
 
-    for dev in list(dev_reg.devices.values()):
+    devs_list = list(
+        dev_reg.devices
+        if not isinstance(dev_reg.devices, dict)
+        else dev_reg.devices.values()
+    )
+    for dev in devs_list:
         for ident in dev.identifiers:
             if ident[0] == DOMAIN and ident[1].startswith(f"{entry.entry_id}_tracker_"):
                 mac = ident[1].replace(f"{entry.entry_id}_tracker_", "")
@@ -174,8 +179,8 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
         return None
 
     @property
-    def location_name(self) -> str | None:
-        """Return the area/room name for this device."""
+    def state(self) -> str | None:
+        """Return the area/room name or home/not_home state for this device."""
         person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
         if self._mac in person_tracking:
             p_state = person_tracking[self._mac]
