@@ -31,7 +31,16 @@
   "options": {
     "step": {
       "init": {
-        "title": "WiFiSense Mapper Options",
+        "title": "WiFiSense Mapper Configuration",
+        "description": "Select an area to configure sensing parameters, Deco/AP node placement, or vacuum room alignment.",
+        "menu_options": {
+          "general": "General & Sensing Settings",
+          "ap_mapping": "Access Points & Deco Hub Placements",
+          "vacuum_mapping": "Vacuum Room Alignment (Roborock / Valetudo)"
+        }
+      },
+      "general": {
+        "title": "General Settings",
         "data": {
           "poll_interval": "Polling interval (seconds)",
           "heatmap_enabled": "Enable heatmap generation",
@@ -45,6 +54,14 @@
           "baseline_days": "Number of days of data used to establish the normal signal baseline.",
           "vacuum_entities": "Select vacuum map image/camera entities to use for room layout validation."
         }
+      },
+      "ap_mapping": {
+        "title": "Access Point & Deco Hub Placements",
+        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node will contribute to presence and distance analysis in that room."
+      },
+      "vacuum_mapping": {
+        "title": "Vacuum Room Alignment",
+        "description": "Match detected vacuum map room segments (e.g. Roborock rooms) to Home Assistant Areas to align physical boundaries with WiFi telemetry."
       }
     }
   },

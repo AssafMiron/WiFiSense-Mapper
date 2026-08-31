@@ -88,11 +88,27 @@ class WiFiSenseBaseBinary(CoordinatorEntity[WiFiSenseCoordinator], BinarySensorE
         self._attr_device_info = device_info
 
 
+def estimate_distance_from_rssi(
+    rssi: float | None, tx_power: float = -45.0, n: float = 2.5
+) -> float | None:
+    """Estimate distance in meters from RSSI using indoor log-distance path loss model.
+
+    d = 10 ^ ((tx_power - rssi) / (10 * n))
+    """
+    if rssi is None or rssi >= 0:
+        return None
+    try:
+        dist = 10.0 ** ((tx_power - float(rssi)) / (10.0 * n))
+        return round(max(0.1, min(dist, 50.0)), 1)
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 class PresenceBinarySensor(WiFiSenseBaseBinary):
     """Fused WiFi presence indicator for an HA area.
 
     Presence is considered active if ANY of the following are true:
-      a) At least one router client is associated to an AP in this area.
+      a) At least one router client is associated to an AP in this area or assigned to this area.
       b) At least one CSI node in this area reports motion detected = True.
 
     This fused approach reduces false negatives from single-source failures.
@@ -128,7 +144,10 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
         area_ap_macs = {
             mac for mac, ap in ap_stats.items() if ap.area_id == self._area_id
         }
-        if any(c.ap_mac in area_ap_macs for c in clients.values()):
+        if any(
+            (c.ap_mac in area_ap_macs or c.area_id == self._area_id)
+            for c in clients.values()
+        ):
             return True
 
         # Source B: CSI motion detected in this area
@@ -149,11 +168,39 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
         area_ap_macs = {
             mac for mac, ap in ap_stats.items() if ap.area_id == self._area_id
         }
-        area_clients = [c for c in clients.values() if c.ap_mac in area_ap_macs]
+        area_aps = [
+            ap.name or mac for mac, ap in ap_stats.items() if ap.area_id == self._area_id
+        ]
+        area_clients = [
+            c
+            for c in clients.values()
+            if (c.ap_mac in area_ap_macs or c.area_id == self._area_id)
+        ]
+
+        devices_detail = []
+        distances = []
+        for c in area_clients[:10]:
+            dist = estimate_distance_from_rssi(c.rssi)
+            if dist is not None:
+                distances.append(dist)
+            devices_detail.append(
+                {
+                    "mac": c.mac,
+                    "name": c.hostname or c.mac,
+                    "ip": c.ip,
+                    "rssi": c.rssi,
+                    "estimated_distance_m": dist,
+                    "ap_mac": c.ap_mac,
+                }
+            )
+
         return {
             "area_id": self._area_id,
             "device_count": len(area_clients),
-            "devices": [c.hostname or c.mac for c in area_clients[:10]],  # limit to 10
+            "devices": [c.hostname or c.mac for c in area_clients[:10]],
+            "devices_detail": devices_detail,
+            "nearest_distance_m": min(distances) if distances else None,
+            "active_aps": area_aps,
         }
 
 

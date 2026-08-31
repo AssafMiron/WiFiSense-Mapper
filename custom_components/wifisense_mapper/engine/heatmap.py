@@ -180,63 +180,56 @@ def _render_png_pillow(
     return buf.getvalue()
 
 
-def _render_bmp_fallback(
+def _render_png_pure_python(
     pixel_data: list[list[tuple[int, int, int]]],
     rows: int,
     cols: int,
     scale: int = 10,
 ) -> bytes:
-    """Minimal BMP renderer used when Pillow is not installed.
+    """Pure-Python standard-compliant PNG encoder (zero external dependencies).
 
-    Generates a 24-bit BMP file in pure Python — no external dependencies.
-    The output is larger than PNG but fully functional as a raw image.
+    Encodes RGB pixel matrix directly into valid PNG bytes using standard zlib and struct.
+    Ensures ImageEntity Content-Type: image/png is ALWAYS valid even without Pillow.
     """
+    import struct
+    import zlib
+
     w = cols * scale
     h = rows * scale
-    row_bytes = w * 3
-    # BMP rows must be padded to 4-byte boundaries
-    pad = (4 - (row_bytes % 4)) % 4
-    padded_row = row_bytes + pad
-    pixel_data_size = padded_row * h
-    file_size = 54 + pixel_data_size
 
-    def le4(n: int) -> bytes:
-        return n.to_bytes(4, "little")
-
-    def le2(n: int) -> bytes:
-        return n.to_bytes(2, "little")
-
-    header = (
-        b"BM"
-        + le4(file_size)
-        + le4(0)  # reserved
-        + le4(54)  # pixel data offset
-        + le4(40)  # BITMAPINFOHEADER size
-        + le4(w)
-        + le4(-h & 0xFFFFFFFF)  # negative height = top-down
-        + le2(1)  # color planes
-        + le2(24)  # bits per pixel
-        + le4(0)  # no compression
-        + le4(pixel_data_size)
-        + le4(2835)
-        + le4(2835)  # pixels per meter (72 dpi)
-        + le4(0)
-        + le4(0)  # colors used / important
-    )
-
-    rows_out = bytearray()
+    # Build raw scanlines with filter byte (0x00 = None) at the start of each row
+    raw_scanlines = bytearray()
     for r in range(rows):
-        row_out = bytearray()
+        row_bytes = bytearray()
         for c in range(cols):
             color = pixel_data[r][c]
-            for _ in range(scale):
-                # BMP stores BGR
-                row_out += bytes([color[2], color[1], color[0]])
-        row_out += b"\x00" * pad
+            rgb = bytes([color[0], color[1], color[2]])
+            row_bytes.extend(rgb * scale)
         for _ in range(scale):
-            rows_out += row_out
+            raw_scanlines.append(0)  # Filter type 0 (None)
+            raw_scanlines.extend(row_bytes)
 
-    return header + bytes(rows_out)
+    # Helper to construct PNG chunks: length (4B) + type (4B) + data + crc32 (4B)
+    def png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+        length = struct.pack(">I", len(data))
+        crc = struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+        return length + chunk_type + data + crc
+
+    # PNG Signature
+    png_bytes = bytearray(b"\x89PNG\r\n\x1a\n")
+
+    # IHDR Chunk: width(4), height(4), bit_depth(1), color_type(1)=2 (RGB), comp(1), filter(1), interlace(1)
+    ihdr_data = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    png_bytes.extend(png_chunk(b"IHDR", ihdr_data))
+
+    # IDAT Chunk: compressed image stream
+    compressed = zlib.compress(bytes(raw_scanlines), level=6)
+    png_bytes.extend(png_chunk(b"IDAT", compressed))
+
+    # IEND Chunk
+    png_bytes.extend(png_chunk(b"IEND", b""))
+
+    return bytes(png_bytes)
 
 
 class HeatmapRenderer:
@@ -340,4 +333,4 @@ class HeatmapRenderer:
 
         if self.pillow_available:
             return _render_png_pillow(pixel_data, rows, cols, scale=self.cell_scale)
-        return _render_bmp_fallback(pixel_data, rows, cols, scale=self.cell_scale)
+        return _render_png_pure_python(pixel_data, rows, cols, scale=self.cell_scale)

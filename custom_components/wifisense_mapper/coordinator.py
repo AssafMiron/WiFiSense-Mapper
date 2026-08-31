@@ -151,6 +151,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.router_clients = {c.mac: c for c in clients}
                 ap_list = await self.router_client.async_get_ap_stats()
                 self.ap_stats = {a.mac: a for a in ap_list}
+                self._apply_ap_mappings()
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Router poll failed: %s", exc)
 
@@ -183,6 +184,41 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         return self._current_data(anomaly_scores=anomaly_scores)
+
+    # ─── AP & Node mappings ───────────────────────────────────────────────────
+
+    def _apply_ap_mappings(self) -> None:
+        """Apply manual and auto-discovered area/floor assignments to APs and clients."""
+        from .registry_helpers import auto_link_ap_to_ha_device
+
+        node_area_map: dict[str, str] = self.entry.options.get("node_area_map", {})
+        node_floor_map: dict[str, str] = self.entry.options.get("node_floor_map", {})
+
+        for mac, ap in self.ap_stats.items():
+            # 1. Configured options override
+            if mac in node_area_map:
+                ap.area_id = node_area_map[mac]
+            if mac in node_floor_map:
+                ap.floor_id = node_floor_map[mac]
+
+            # 2. Auto-discovery from HA Device & Area Registry if unassigned
+            if not ap.area_id or not ap.floor_id:
+                auto_area, auto_floor = auto_link_ap_to_ha_device(
+                    self.hass, ap.mac, ap.name
+                )
+                if not ap.area_id and auto_area:
+                    ap.area_id = auto_area
+                if not ap.floor_id and auto_floor:
+                    ap.floor_id = auto_floor
+
+        # Propagate AP area/floor onto associated clients
+        for client in self.router_clients.values():
+            if client.ap_mac and client.ap_mac in self.ap_stats:
+                ap = self.ap_stats[client.ap_mac]
+                if ap.area_id and not client.area_id:
+                    client.area_id = ap.area_id
+                if ap.floor_id and not client.floor_id:
+                    client.floor_id = ap.floor_id
 
     # ─── CSI state reading ────────────────────────────────────────────────────
 
@@ -234,9 +270,6 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_render_heatmaps(self, anomaly_scores: dict[str, dict]) -> None:
         """Render all heatmap layers for all floors in executor threads."""
         for floor_id, grid in self.grids.items():
-            if not grid.all_cells():
-                continue  # Skip floors with no data yet
-
             scores = anomaly_scores.get(floor_id, {})
             layers: dict[str, bytes] = {}
 

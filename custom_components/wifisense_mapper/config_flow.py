@@ -231,23 +231,32 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> WiFiSenseOptionsFlow:
-        return WiFiSenseOptionsFlow(config_entry)
+        return WiFiSenseOptionsFlow()
 
 
 class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
-    """Options flow for adjusting polling, thresholds, and vacuum links."""
+    """Options flow for adjusting polling, thresholds, AP area mapping, and vacuum room alignment."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+    def __init__(self) -> None:
+        self._options: dict[str, Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Options: polling interval, anomaly threshold, heatmap toggle."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+        """Main options menu."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["general", "ap_mapping", "vacuum_mapping"],
+        )
 
-        current = self.config_entry.options
+    async def async_step_general(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """General settings: polling interval, anomaly threshold, heatmap toggle."""
+        current = dict(self.config_entry.options)
+        if user_input is not None:
+            current.update(user_input)
+            return self.async_create_entry(title="", data=current)
 
         # Build vacuum entity list for selector
         vacuum_entities = self._discover_vacuum_entity_ids()
@@ -279,7 +288,139 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 ): vol.All(list, [vol.In(vacuum_options)] if vacuum_options else [str]),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="general", data_schema=schema)
+
+    async def async_step_ap_mapping(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Map discovered Deco nodes / APs to Home Assistant Areas."""
+        current = dict(self.config_entry.options)
+        current_node_areas: dict[str, str] = dict(current.get("node_area_map", {}))
+
+        from homeassistant.helpers import area_registry as ar
+
+        area_reg = ar.async_get(self.hass)
+        area_options = {"": "Auto-detect / None"}
+        for area in area_reg.areas.values():
+            area_options[area.id] = area.name
+
+        # Find all known APs from coordinator data or registered devices
+        ap_list = self._get_known_aps()
+
+        if user_input is not None:
+            updated_map = dict(current_node_areas)
+            for mac in ap_list:
+                field_key = f"ap_{mac.replace(':', '_')}"
+                if field_key in user_input:
+                    val = user_input[field_key]
+                    if val:
+                        updated_map[mac] = val
+                    elif mac in updated_map:
+                        updated_map.pop(mac)
+            current["node_area_map"] = updated_map
+            return self.async_create_entry(title="", data=current)
+
+        schema_dict: dict[Any, Any] = {}
+        for mac in ap_list:
+            field_key = f"ap_{mac.replace(':', '_')}"
+            default_area = current_node_areas.get(mac, "")
+            schema_dict[vol.Optional(field_key, default=default_area)] = vol.In(
+                area_options
+            )
+
+        if not schema_dict:
+            # No APs detected yet
+            schema_dict[vol.Optional("info_no_aps", default="No APs detected yet")] = str
+
+        return self.async_show_form(
+            step_id="ap_mapping",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={"ap_count": str(len(ap_list))},
+        )
+
+    async def async_step_vacuum_mapping(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Map Roborock / vacuum room segments to Home Assistant Areas."""
+        current = dict(self.config_entry.options)
+        current_vac_mappings: dict[str, str] = dict(
+            current.get("vacuum_room_mappings", {})
+        )
+
+        from homeassistant.helpers import area_registry as ar
+
+        area_reg = ar.async_get(self.hass)
+        area_options = {"": "Auto-detect / None"}
+        for area in area_reg.areas.values():
+            area_options[area.id] = area.name
+
+        # Discover vacuum room segments
+        segments = self._get_vacuum_segments()
+
+        if user_input is not None:
+            updated_map = dict(current_vac_mappings)
+            for seg_id in segments:
+                field_key = f"vac_seg_{seg_id}"
+                if field_key in user_input:
+                    val = user_input[field_key]
+                    if val:
+                        updated_map[str(seg_id)] = val
+                    elif str(seg_id) in updated_map:
+                        updated_map.pop(str(seg_id))
+            current["vacuum_room_mappings"] = updated_map
+            return self.async_create_entry(title="", data=current)
+
+        schema_dict: dict[Any, Any] = {}
+        for seg_id in segments:
+            field_key = f"vac_seg_{seg_id}"
+            default_area = current_vac_mappings.get(str(seg_id), "")
+            schema_dict[vol.Optional(field_key, default=default_area)] = vol.In(
+                area_options
+            )
+
+        if not schema_dict:
+            schema_dict[
+                vol.Optional("info_no_vac", default="No vacuum room segments detected")
+            ] = str
+
+        return self.async_show_form(
+            step_id="vacuum_mapping",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={"segment_count": str(len(segments))},
+        )
+
+    def _get_known_aps(self) -> dict[str, str]:
+        """Return dict of ap_mac -> display name."""
+        aps: dict[str, str] = {}
+        for mac in self.config_entry.options.get("node_area_map", {}):
+            aps[mac] = f"AP ({mac})"
+        try:
+            entry_data = self.hass.data.get(DOMAIN, {}).get(
+                self.config_entry.entry_id, {}
+            )
+            coordinator = entry_data.get("coordinator")
+            if coordinator and coordinator.ap_stats:
+                for mac, ap in coordinator.ap_stats.items():
+                    aps[mac] = f"{ap.name or 'Deco Node'} ({mac})"
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Could not read AP stats: %s", exc)
+        return aps
+
+    def _get_vacuum_segments(self) -> dict[str, str]:
+        """Return dict of segment_id -> segment_name."""
+        segments: dict[str, str] = {}
+        for seg_id in self.config_entry.options.get("vacuum_room_mappings", {}):
+            segments[str(seg_id)] = f"Room {seg_id}"
+        try:
+            from .vacuum_helpers import discover_vacuum_maps
+
+            sources = discover_vacuum_maps(self.hass)
+            for src in sources:
+                for seg in src.room_segments:
+                    segments[str(seg.segment_id)] = seg.name or f"Room {seg.segment_id}"
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Could not read vacuum segments: %s", exc)
+        return segments
 
     def _discover_vacuum_entity_ids(self) -> list[str]:
         """Return entity IDs of vacuum map image/camera entities."""
@@ -290,3 +431,4 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             return [s.entity_id for s in sources]
         except Exception:  # noqa: BLE001
             return []
+

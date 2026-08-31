@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Final
 
-# Integration domain
+# Integration domain & version
 DOMAIN: Final = "wifisense_mapper"
+VERSION: Final = "0.1.1"
 
 # Platforms to set up
 PLATFORMS: Final = [

@@ -86,6 +86,25 @@ class TestBinarySensors:
         assert (
             sensor.is_on is True
         )  # Client aa:bb:cc:dd:ee:01 is associated to AP in living_room
+        attrs = sensor.extra_state_attributes
+        assert attrs["device_count"] == 1
+        assert attrs["nearest_distance_m"] is not None
+        assert len(attrs["devices_detail"]) == 1
+        assert attrs["devices_detail"][0]["name"] == "Alice Phone"
+        assert attrs["devices_detail"][0]["rssi"] == -60
+        assert attrs["active_aps"] == ["AP 1"]
+
+    def test_estimate_distance_helper(self):
+        from custom_components.wifisense_mapper.binary_sensor import (
+            estimate_distance_from_rssi,
+        )
+
+        assert estimate_distance_from_rssi(None) is None
+        assert estimate_distance_from_rssi(0) is None
+        d_close = estimate_distance_from_rssi(-45)
+        d_far = estimate_distance_from_rssi(-75)
+        assert d_close is not None and d_far is not None
+        assert d_close < d_far
 
 
 class TestImageEntity:
