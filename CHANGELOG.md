@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2026-08-31
+
+### Fixed
+- **Deco Client Telemetry & Persona Detection ([#6](https://github.com/AssafMiron/WiFiSense-Mapper/issues/6))**:
+  - Replaced brittle `get_status()` with direct per-node `admin/client?form=client_list` requests (`{"device_mac": node_mac}`), bypassing `admin/wireless?form=wlan` errors on Deco X60 and ensuring client enumeration.
+  - Added extraction of nested `signal_level` (`band5`, `band2_4`, `band6`) for client RSSI.
+  - Added base64 string decoding for node `nickname`, `custom_nickname`, and client `name`.
+  - Maintained per-node client AP association (`ap_mac`) for accurate presence localization.
+- **Access Point Naming & Options Flow UX**:
+  - Cross-referenced MAC addresses with Home Assistant's `device_registry` to retrieve user-configured friendly names (e.g., "Kitchen Deco", "Office Deco").
+  - Displayed friendly names directly as the dropdown labels in Options Flow.
+- **Robot Vacuum Room Segments**:
+  - Expanded segment discovery to scan `vacuum.*` domain entities in addition to `image.*` and `camera.*` entities across multiple attribute schemas (`rooms`, `room_list`, `segments`, `map_rooms`, etc.).
+- **Home Assistant Deprecations**:
+  - Replaced deprecated `location_name` property override on `TrackerEntity` with `@property def state` in `device_tracker.py`.
+  - Updated device registry iteration to avoid deprecation warnings in HA 2024+.
+
+---
+
 ## [0.2.0] - 2026-08-31
 
 ### Added

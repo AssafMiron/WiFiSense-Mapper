@@ -98,7 +98,9 @@ async def test_area_coverage_calculation(hass: HomeAssistant) -> None:
 async def test_diagnostics_dump(hass: HomeAssistant, mock_config_entry_no_router) -> None:
     """Test Home Assistant diagnostics dump for WiFiSense entry."""
     from custom_components.wifisense_mapper.const import DOMAIN
-    from custom_components.wifisense_mapper.diagnostics import async_get_config_entry_diagnostics
+    from custom_components.wifisense_mapper.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
 
     mock_config_entry_no_router.add_to_hass(hass)
     coordinator = WiFiSenseCoordinator(hass, mock_config_entry_no_router, router_client=None)
