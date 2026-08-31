@@ -63,7 +63,12 @@ class DecoClient(RouterClient):
         # Import is guarded to give a helpful error if package is missing.
         from tplinkrouterc6u import TPLinkDecoClient  # type: ignore[import]
 
-        self._client = TPLinkDecoClient(self.host, self.password)
+        self._client = TPLinkDecoClient(
+            self.host,
+            self.password,
+            username=self.username or "admin",
+            verify_ssl=False,
+        )
         self._client.authorize()
 
     async def async_get_clients(self) -> list[ClientInfo]:
@@ -92,27 +97,138 @@ class DecoClient(RouterClient):
             self._client.authorize()
             status = self._client.get_status()
 
-        # tplinkrouterc6u exposes clients on status.clients
-        for client in getattr(status, "clients", []) or []:
-            mac_raw = getattr(client, "mac", None) or ""
+        # Build lookup table from AP name/model to AP MAC if mesh node list is cached
+        node_name_to_mac: dict[str, str] = {}
+        cached_nodes = getattr(self._client, "devices", []) or []
+        for node in cached_nodes:
+            if isinstance(node, dict):
+                n_mac = node.get("mac")
+                if not n_mac:
+                    continue
+                norm_m = self.normalize_mac(str(n_mac))
+                for key in ("custom_name", "name", "device_model", "model"):
+                    val = node.get(key)
+                    if val:
+                        node_name_to_mac[str(val).strip().lower()] = norm_m
+            else:
+                n_mac = getattr(node, "macaddr", None) or getattr(node, "mac", None)
+                if not n_mac:
+                    continue
+                norm_m = self.normalize_mac(str(n_mac))
+                for attr in ("custom_name", "name", "device_model"):
+                    val = getattr(node, attr, None)
+                    if val:
+                        node_name_to_mac[str(val).strip().lower()] = norm_m
+
+        # In tplinkrouterc6u, status.devices holds connected clients (Device objects)
+        raw_devices = getattr(status, "devices", None)
+        if raw_devices is None:
+            raw_devices = getattr(status, "clients", []) or []
+
+        for device in raw_devices:
+            mac_raw = (
+                getattr(device, "macaddr", None)
+                or getattr(device, "mac", None)
+                or (device.get("mac") if isinstance(device, dict) else None)
+            )
             if not mac_raw:
                 continue
+
+            ip = (
+                getattr(device, "ipaddr", None)
+                or getattr(device, "ip", None)
+                or (device.get("ip") if isinstance(device, dict) else None)
+            )
+
+            hostname = (
+                getattr(device, "hostname", None)
+                or getattr(device, "name", None)
+                or (device.get("name") if isinstance(device, dict) else None)
+            )
+
+            rssi = (
+                getattr(device, "signal", None)
+                if getattr(device, "signal", None) is not None
+                else getattr(device, "rssi", None)
+                if getattr(device, "rssi", None) is not None
+                else (
+                    device.get("signal")
+                    if isinstance(device, dict) and device.get("signal") is not None
+                    else device.get("rssi")
+                    if isinstance(device, dict)
+                    else None
+                )
+            )
+
+            ap_mac_raw = (
+                getattr(device, "ap_name", None)
+                or getattr(device, "device_mac", None)
+                or getattr(device, "ap_mac", None)
+                or (
+                    device.get("ap_name")
+                    or device.get("device_mac")
+                    or device.get("ap_mac")
+                    if isinstance(device, dict)
+                    else None
+                )
+            )
+
+            ap_mac: str | None = None
+            if ap_mac_raw:
+                ap_raw_str = str(ap_mac_raw).strip()
+                if ap_raw_str.lower() in node_name_to_mac:
+                    ap_mac = node_name_to_mac[ap_raw_str.lower()]
+                else:
+                    ap_mac = self.normalize_mac(ap_raw_str) or None
+
+            ssid = (
+                getattr(device, "ssid", None)
+                or (device.get("ssid") if isinstance(device, dict) else None)
+            )
+
+            band = (
+                getattr(device, "frequency", None)
+                or getattr(device, "band", None)
+                or (
+                    device.get("frequency") or device.get("band")
+                    if isinstance(device, dict)
+                    else None
+                )
+            )
+
+            conn_type = getattr(device, "type", None) or (
+                device.get("type") if isinstance(device, dict) else None
+            )
+            if band is None and conn_type is not None:
+                if hasattr(conn_type, "get_band"):
+                    band_str = conn_type.get_band()
+                    if band_str:
+                        band = "2.4GHz" if band_str == "2G" else f"{band_str}Hz"
+                elif hasattr(conn_type, "name"):
+                    band = str(conn_type.name)
+
+            extra: dict[str, Any] = {"via_deco": True}
+            if hasattr(device, "down_speed") and device.down_speed is not None:
+                extra["down_speed"] = device.down_speed
+            if hasattr(device, "up_speed") and device.up_speed is not None:
+                extra["up_speed"] = device.up_speed
+            if conn_type is not None:
+                extra["client_type"] = (
+                    conn_type.value if hasattr(conn_type, "value") else str(conn_type)
+                )
+            elif (client_type := getattr(device, "client_type", None)) is not None:
+                extra["client_type"] = client_type
+
             result.append(
                 ClientInfo(
-                    mac=self.normalize_mac(mac_raw),
-                    ip=getattr(client, "ip", None),
-                    hostname=getattr(client, "hostname", None)
-                    or getattr(client, "name", None),
-                    # RSSI exposure varies by Deco model — not always available
-                    rssi=getattr(client, "rssi", None),
-                    ap_mac=self.normalize_mac(getattr(client, "device_mac", None) or "")
-                    or None,
-                    ssid=getattr(client, "ssid", None),
-                    band=getattr(client, "band", None),
-                    extra={
-                        "via_deco": True,
-                        "client_type": getattr(client, "client_type", None),
-                    },
+                    mac=self.normalize_mac(str(mac_raw)),
+                    ip=str(ip) if ip is not None else None,
+                    hostname=hostname,
+                    rssi=rssi,
+                    ap_mac=ap_mac,
+                    ssid=ssid,
+                    band=band,
+                    extra=extra,
                 )
             )
         return result
@@ -135,37 +251,137 @@ class DecoClient(RouterClient):
     def _get_ap_stats_sync(self) -> list[APStats]:
         """Blocking AP stats fetch — runs in executor."""
         result: list[APStats] = []
+        deco_nodes: list[Any] = []
+
+        try:
+            if not getattr(self._client, "devices", None):
+                self._client.get_firmware()
+            deco_nodes = getattr(self._client, "devices", []) or []
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug(
+                "Deco get_firmware/device_list failed, attempting reauth: %s", exc
+            )
+            try:
+                self._client.authorize()
+                self._client.get_firmware()
+                deco_nodes = getattr(self._client, "devices", []) or []
+            except Exception as auth_exc:  # noqa: BLE001
+                _LOGGER.warning("Failed to fetch Deco node list: %s", auth_exc)
+
+        # Also get status to associate client counts
+        status = None
         try:
             status = self._client.get_status()
-        except Exception:  # noqa: BLE001
-            self._client.authorize()
-            status = self._client.get_status()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Deco get_status in AP stats failed: %s", exc)
 
-        for device in getattr(status, "devices", []) or []:
-            mac_raw = getattr(device, "mac", None) or ""
+        clients: list[Any] = []
+        if status:
+            clients = (
+                getattr(status, "devices", None)
+                or getattr(status, "clients", [])
+                or []
+            )
+
+        for node in deco_nodes:
+            mac_raw = (
+                node.get("mac")
+                if isinstance(node, dict)
+                else getattr(node, "macaddr", None) or getattr(node, "mac", None)
+            ) or ""
             if not mac_raw:
                 continue
+
+            name = (
+                node.get("custom_name")
+                or node.get("name")
+                or node.get("device_model")
+                or node.get("model")
+                if isinstance(node, dict)
+                else getattr(node, "custom_name", None)
+                or getattr(node, "name", None)
+                or getattr(node, "device_model", None)
+            )
+
+            norm_node_mac = self.normalize_mac(str(mac_raw))
+
+            # Count clients associated with this node
+            matching_clients = 0
+            for c in clients:
+                c_ap_mac = (
+                    getattr(c, "ap_name", None)
+                    or getattr(c, "device_mac", None)
+                    or getattr(c, "ap_mac", None)
+                    or (
+                        c.get("ap_name")
+                        or c.get("device_mac")
+                        or c.get("ap_mac")
+                        if isinstance(c, dict)
+                        else None
+                    )
+                )
+                if c_ap_mac and (
+                    self.normalize_mac(str(c_ap_mac)) == norm_node_mac
+                    or bool(name and str(c_ap_mac).lower() == str(name).lower())
+                ):
+                    matching_clients += 1
+
+            # If only 1 node exists in the mesh and clients have no specific ap_name,
+            # attribute all connected clients to this node
+            if len(deco_nodes) == 1 and matching_clients == 0 and len(clients) > 0:
+                matching_clients = len(clients)
+
+            role = (
+                node.get("role")
+                if isinstance(node, dict)
+                else getattr(node, "role", None)
+            )
+            hw_ver = (
+                node.get("hardware_ver")
+                if isinstance(node, dict)
+                else getattr(node, "hardware_ver", None)
+            )
+            sw_ver = (
+                node.get("software_ver")
+                if isinstance(node, dict)
+                else getattr(node, "software_ver", None)
+            )
+            ip = (
+                node.get("ip")
+                if isinstance(node, dict)
+                else getattr(node, "ipaddr", None) or getattr(node, "ip", None)
+            )
+
             result.append(
                 APStats(
-                    mac=self.normalize_mac(mac_raw),
-                    name=getattr(device, "name", None)
-                    or getattr(device, "device_model", None),
-                    channel=getattr(device, "channel", None),
-                    band=getattr(device, "band", None),
-                    tx_rate=getattr(device, "tx_rate", None),
-                    rx_rate=getattr(device, "rx_rate", None),
-                    noise_floor=getattr(device, "noise_floor", None),
-                    client_count=len(
-                        [
-                            c
-                            for c in getattr(status, "clients", [])
-                            if self.normalize_mac(getattr(c, "device_mac", "") or "")
-                            == self.normalize_mac(mac_raw)
-                        ]
-                    ),
-                    extra={"via_deco": True},
+                    mac=norm_node_mac,
+                    name=name,
+                    client_count=matching_clients,
+                    extra={
+                        "via_deco": True,
+                        "role": role,
+                        "hardware_ver": hw_ver,
+                        "software_ver": sw_ver,
+                        "ip": ip,
+                    },
                 )
             )
+
+        # Fallback if no mesh nodes found in device_list but status has LAN MAC
+        if not result and status:
+            lan_mac = getattr(status, "lan_macaddr", None) or getattr(
+                status, "wan_macaddr", None
+            )
+            if lan_mac:
+                result.append(
+                    APStats(
+                        mac=self.normalize_mac(str(lan_mac)),
+                        name="Deco Master",
+                        client_count=len(clients),
+                        extra={"via_deco": True, "role": "master"},
+                    )
+                )
+
         return result
 
     async def async_disconnect(self) -> None:
