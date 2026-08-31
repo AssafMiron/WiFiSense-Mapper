@@ -127,8 +127,6 @@ def auto_link_ap_to_ha_device(
     dev_reg = dr.async_get(hass)
     norm_mac = str(ap_mac).lower().replace("-", ":").replace(".", ":")
 
-    # 1. Search HA Device Registry by MAC address in connections or identifiers
-    matched_device = None
     for device in dev_reg.devices.values():
         # Check connections
         for conn in device.connections:

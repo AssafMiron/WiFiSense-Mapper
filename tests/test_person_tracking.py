@@ -130,7 +130,7 @@ def test_device_tracker_person_attributes() -> None:
     coordinator.router_clients = {}
 
     tracker = WifiSenseDeviceTracker(coordinator, entry, mac, device_info)
-    assert tracker.location_name == "Living Room"
+    assert tracker.state == "Living Room"
     attrs = tracker.extra_state_attributes
     assert attrs["person_name"] == "Alice"
     assert attrs["x_pct"] == 20.0

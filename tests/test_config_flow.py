@@ -301,12 +301,94 @@ async def test_options_flow_ap_mapping(hass: HomeAssistant, mock_config_entry_no
     assert result_ap["type"] == data_entry_flow.FlowResultType.FORM
     assert result_ap["step_id"] == "ap_mapping"
 
-    # Submit AP mapping
+    # Submit AP mapping using the generated friendly label
     result_saved = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {"ap_aa_bb_cc_dd_ee_ff": "office"},
+        {"Deco Hub (aa:bb:cc:dd:ee:ff)": "office"},
     )
     assert result_saved["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result_saved["data"]["node_area_map"]["aa:bb:cc:dd:ee:ff"] == "office"
+
+
+@pytest.mark.asyncio
+async def test_options_flow_ap_mapping_device_registry_friendly_names(
+    hass: HomeAssistant, mock_config_entry_no_router
+) -> None:
+    """Test options flow uses friendly names from Home Assistant Device Registry."""
+    mock_config_entry_no_router.add_to_hass(hass)
+
+    from homeassistant.helpers import device_registry as dr
+
+    dev_reg = dr.async_get(hass)
+    dev_reg.async_get_or_create(
+        config_entry_id=mock_config_entry_no_router.entry_id,
+        connections={(dr.CONNECTION_NETWORK_MAC, "b0:a7:b9:bb:2f:ac")},
+        name="Kitchen Deco",
+    )
+
+    hass.config_entries.async_update_entry(
+        mock_config_entry_no_router,
+        options={"node_area_map": {"b0:a7:b9:bb:2f:ac": ""}},
+    )
+
+    result = await hass.config_entries.options.async_init(
+        mock_config_entry_no_router.entry_id
+    )
+    result_ap = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "ap_mapping"},
+    )
+    assert result_ap["type"] == data_entry_flow.FlowResultType.FORM
+    schema_keys = [str(k) for k in result_ap["data_schema"].schema]
+    assert any("Kitchen Deco" in k for k in schema_keys)
+
+
+@pytest.mark.asyncio
+async def test_options_flow_vacuum_mapping_with_vacuum_domain_attributes(
+    hass: HomeAssistant, mock_config_entry_no_router
+) -> None:
+    """Test vacuum room segments discovery from a vacuum domain entity's state attributes."""
+    from homeassistant.helpers import area_registry as ar
+
+    area_reg = ar.async_get(hass)
+    area_reg.async_create("Living Room")
+
+    # Set vacuum state with rooms attribute list
+    hass.states.async_set(
+        "vacuum.roborock_s7",
+        "docked",
+        {
+            "friendly_name": "Roborock S7",
+            "rooms": [
+                {"id": 16, "name": "Living Room"},
+                {"id": 17, "name": "Kitchen"},
+            ],
+        },
+    )
+
+    mock_config_entry_no_router.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(
+        mock_config_entry_no_router.entry_id
+    )
+    result_vac = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"next_step_id": "vacuum_mapping"},
+    )
+    assert result_vac["type"] == data_entry_flow.FlowResultType.FORM
+    assert result_vac["step_id"] == "vacuum_mapping"
+
+    # Verify both room segments were discovered
+    schema_keys = [str(k) for k in result_vac["data_schema"].schema]
+    assert any("Living Room" in k for k in schema_keys)
+    assert any("Kitchen" in k for k in schema_keys)
+
+    living_room_key = next(k for k in schema_keys if "Living Room" in k)
+    result_saved = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {living_room_key: "living_room"},
+    )
+    assert result_saved["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+    assert result_saved["data"]["vacuum_room_mappings"]["16"] == "living_room"
+
 
 

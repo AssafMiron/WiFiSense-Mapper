@@ -139,7 +139,7 @@ class TestDeviceTracker:
         )
         assert tracker.is_connected is True
         assert tracker.name == "Alice Phone"
-        assert tracker.location_name == "living_room"
+        assert tracker.state == "living_room"
         assert tracker.source_type == "router"
         assert tracker.latitude is None
         assert tracker.device_info == dev_info

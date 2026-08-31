@@ -174,8 +174,8 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
         return None
 
     @property
-    def location_name(self) -> str | None:
-        """Return the area/room name for this device."""
+    def state(self) -> str | None:
+        """Return the area/room name or home/not_home state for this device."""
         person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
         if self._mac in person_tracking:
             p_state = person_tracking[self._mac]

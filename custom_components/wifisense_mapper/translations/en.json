@@ -43,7 +43,7 @@
       },
       "person_tracking": {
         "title": "Person Tag & Wearable Mapping",
-        "description": "Assign discovered WiFi devices (smartwatches, phones, or ESP32 tags) to Home Assistant Person entities for real-time indoor room localization, micro-zones, and activity tracking.\n\nDiscovered Devices:\n{client_legend}"
+        "description": "Assign discovered WiFi devices (smartwatches, phones, or ESP32 tags) to Home Assistant Person entities for real-time indoor room localization, micro-zones, and activity tracking."
       },
       "general": {
         "title": "General Settings",
@@ -63,15 +63,15 @@
       },
       "ap_mapping": {
         "title": "Access Point & Deco Hub Placements",
-        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node contribute to presence and room localization.\n\nDiscovered Hubs:\n{ap_legend}"
+        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node contribute to presence and room localization."
       },
       "vacuum_mapping": {
         "title": "Vacuum Room Alignment",
-        "description": "Match detected vacuum map room segments (e.g. Roborock rooms) to Home Assistant Areas to align physical boundaries with WiFi telemetry.\n\nDiscovered Room Segments:\n{seg_legend}"
+        "description": "Match detected vacuum map room segments (e.g. Roborock rooms) to Home Assistant Areas to align physical boundaries with WiFi telemetry."
       },
       "troubleshooting": {
         "title": "Diagnostics & System Health",
-        "description": "System Status:\n\n• **Pillow (Image Rendering)**: {pillow_status}\n• **Router Client**: {router_status}\n• **Mesh Coverage**: {coverage_info}\n\n### Recent WiFiSense Logs:\n```\n{recent_logs}\n```\n\n*(Click Submit to return to the Options Menu)*"
+        "description": "System Status:\n\n• **Pillow (Image Rendering)**: {pillow_status}\n• **Router Client**: {router_status}\n• **Mesh Coverage**: {coverage_info}\n\n### Recent WiFiSense Logs:\n*(Select and copy the logs below)*\n```text\n{recent_logs}\n```\n\n*(Click Submit to return to the Options Menu)*"
       }
     }
   },

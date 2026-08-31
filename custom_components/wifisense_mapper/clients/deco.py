@@ -87,151 +87,287 @@ class DecoClient(RouterClient):
             self._connected = False  # Force re-auth on next poll
             return []
 
-    def _get_clients_sync(self) -> list[ClientInfo]:
-        """Blocking client fetch — runs in executor."""
-        result: list[ClientInfo] = []
+    def _decode_string(self, val: Any) -> str:
+        """Safely decode potentially base64-encoded strings from Deco API."""
+        if not val:
+            return ""
+        val_str = str(val).strip()
         try:
-            status = self._client.get_status()
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.debug("Deco get_status failed, attempting reauth: %s", exc)
-            self._client.authorize()
-            status = self._client.get_status()
+            import base64
 
-        # Build lookup table from AP name/model to AP MAC if mesh node list is cached
+            decoded = base64.b64decode(val_str).decode("utf-8", errors="ignore").strip()
+            if decoded and all(c.isprintable() or c.isspace() for c in decoded):
+                return decoded
+        except Exception:  # noqa: BLE001, S110
+            pass
+        return val_str
+
+    def _fetch_deco_nodes(self) -> list[dict[str, Any]]:
+        """Directly fetch Deco mesh nodes via admin/device?form=device_list."""
+        import json
+
+        nodes: list[dict[str, Any]] = []
+        if hasattr(self._client, "request"):
+            try:
+                req_data = json.dumps({"operation": "read"})
+                resp = self._client.request("admin/device?form=device_list", req_data, ignore_errors=True)
+                if isinstance(resp, dict):
+                    raw_list = resp.get("device_list", [])
+                    if isinstance(raw_list, list) and raw_list:
+                        nodes = raw_list
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Direct device_list request failed: %s", exc)
+
+        if not nodes:
+            cached = getattr(self._client, "devices", [])
+            if isinstance(cached, list) and cached:
+                nodes = [dict(n) if isinstance(n, dict) else dict(vars(n)) for n in cached]
+
+        if not nodes and hasattr(self._client, "get_firmware"):
+            try:
+                self._client.get_firmware()
+                cached = getattr(self._client, "devices", [])
+                if isinstance(cached, list) and cached:
+                    nodes = [dict(n) if isinstance(n, dict) else dict(vars(n)) for n in cached]
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("get_firmware fallback failed: %s", exc)
+
+        return nodes
+
+    def _extract_node_name(self, node: dict[str, Any]) -> str:
+        """Extract the friendly name of a Deco mesh node, decoding base64 if needed."""
+        # 1. custom_nickname
+        if node.get("custom_nickname"):
+            return self._decode_string(node["custom_nickname"])
+        # 2. nickname (commonly base64 encoded)
+        if node.get("nickname"):
+            dec = self._decode_string(node["nickname"])
+            if dec:
+                return dec
+        # 3. custom_name / name
+        if node.get("custom_name"):
+            return self._decode_string(node["custom_name"])
+        if node.get("name"):
+            dec = self._decode_string(node["name"])
+            if dec:
+                return dec
+        # 4. device_model / model fallback
+        model = node.get("device_model") or node.get("model") or "Deco"
+        return str(model).strip()
+
+    def _get_clients_sync(self) -> list[ClientInfo]:
+        """Blocking client fetch — runs in executor.
+        
+        Queries client_list per Deco node MAC for accurate AP association and RSSI.
+        Falls back to global client_list and get_status on failure.
+        """
+        import json
+
         node_name_to_mac: dict[str, str] = {}
-        cached_nodes = getattr(self._client, "devices", []) or []
-        for node in cached_nodes:
-            if isinstance(node, dict):
-                n_mac = node.get("mac")
-                if not n_mac:
-                    continue
-                norm_m = self.normalize_mac(str(n_mac))
-                for key in ("custom_name", "name", "device_model", "model"):
-                    val = node.get(key)
-                    if val:
-                        node_name_to_mac[str(val).strip().lower()] = norm_m
-            else:
-                n_mac = getattr(node, "macaddr", None) or getattr(node, "mac", None)
-                if not n_mac:
-                    continue
-                norm_m = self.normalize_mac(str(n_mac))
-                for attr in ("custom_name", "name", "device_model"):
-                    val = getattr(node, attr, None)
-                    if val:
-                        node_name_to_mac[str(val).strip().lower()] = norm_m
+        nodes = self._fetch_deco_nodes()
 
-        # In tplinkrouterc6u, status.devices holds connected clients (Device objects)
-        raw_devices = getattr(status, "devices", None)
-        if raw_devices is None:
-            raw_devices = getattr(status, "clients", []) or []
-
-        for device in raw_devices:
+        for node in nodes:
             mac_raw = (
-                getattr(device, "macaddr", None)
-                or getattr(device, "mac", None)
-                or (device.get("mac") if isinstance(device, dict) else None)
+                node.get("mac")
+                or node.get("macaddr")
+                or node.get("_macaddr")
             )
             if not mac_raw:
                 continue
+            norm_m = self.normalize_mac(str(mac_raw))
+            name = self._extract_node_name(node)
+            if name:
+                node_name_to_mac[name.lower()] = norm_m
+            model = node.get("device_model") or node.get("model")
+            if model:
+                node_name_to_mac[str(model).strip().lower()] = norm_m
+            node_name_to_mac[norm_m] = norm_m
 
-            ip = (
-                getattr(device, "ipaddr", None)
-                or getattr(device, "ip", None)
-                or (device.get("ip") if isinstance(device, dict) else None)
+        # Per-node query loop (yields exact AP association and RSSI)
+        seen_clients: dict[str, ClientInfo] = {}
+
+        if nodes and hasattr(self._client, "request"):
+            for node in nodes:
+                node_mac = node.get("mac") or node.get("macaddr") or node.get("_macaddr")
+                if not node_mac:
+                    continue
+                norm_node_mac = self.normalize_mac(str(node_mac))
+                try:
+                    payload = json.dumps({"operation": "read", "params": {"device_mac": str(node_mac)}})
+                    resp = self._client.request("admin/client?form=client_list", payload, ignore_errors=True)
+                    if isinstance(resp, dict):
+                        raw_clients = resp.get("client_list", [])
+                        if isinstance(raw_clients, list) and raw_clients:
+                            for item in raw_clients:
+                                client_info = self._parse_client_item(item, default_ap_mac=norm_node_mac, node_name_to_mac=node_name_to_mac)
+                                if client_info and client_info.mac:
+                                    seen_clients[client_info.mac] = client_info
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug("Per-node client_list failed for node %s: %s", node_mac, exc)
+
+        # If per-node queries returned no clients, fallback to global client_list
+        if not seen_clients and hasattr(self._client, "request"):
+            try:
+                payload = json.dumps({"operation": "read", "params": {"device_mac": "default"}})
+                resp = self._client.request("admin/client?form=client_list", payload, ignore_errors=True)
+                if isinstance(resp, dict):
+                    raw_clients = resp.get("client_list", [])
+                    if isinstance(raw_clients, list) and raw_clients:
+                        for item in raw_clients:
+                            client_info = self._parse_client_item(item, default_ap_mac=None, node_name_to_mac=node_name_to_mac)
+                            if client_info and client_info.mac:
+                                seen_clients[client_info.mac] = client_info
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Global client_list request failed: %s", exc)
+
+        # Secondary fallback: try get_status() if direct request yielded nothing
+        if not seen_clients and hasattr(self._client, "get_status"):
+            try:
+                status = self._client.get_status()
+                raw_devices = getattr(status, "devices", None) or getattr(status, "clients", []) or []
+                for dev in raw_devices:
+                    client_info = self._parse_client_item(dev, default_ap_mac=None, node_name_to_mac=node_name_to_mac)
+                    if client_info and client_info.mac:
+                        seen_clients[client_info.mac] = client_info
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Deco get_status fallback failed: %s", exc)
+
+        return list(seen_clients.values())
+
+    def _parse_client_item(
+        self,
+        item: dict[str, Any] | Any,
+        default_ap_mac: str | None,
+        node_name_to_mac: dict[str, str],
+    ) -> ClientInfo | None:
+        """Parse raw Deco client JSON dict or object into ClientInfo."""
+        data: dict[str, Any] = item if isinstance(item, dict) else vars(item)
+
+        # Check online status if present
+        if "online" in data and not data["online"]:
+            return None
+
+        mac_raw = (
+            data.get("mac")
+            or data.get("macaddr")
+            or data.get("_macaddr")
+            or getattr(item, "macaddr", None)
+            or getattr(item, "mac", None)
+        )
+        if not mac_raw:
+            return None
+
+        mac = self.normalize_mac(str(mac_raw))
+        ip = (
+            data.get("ip")
+            or data.get("ipaddr")
+            or data.get("_ipaddr")
+            or getattr(item, "ipaddr", None)
+            or getattr(item, "ip", None)
+        )
+        raw_name = (
+            data.get("name")
+            or data.get("hostname")
+            or getattr(item, "hostname", None)
+            or getattr(item, "name", None)
+            or ""
+        )
+        hostname = self._decode_string(raw_name) if raw_name else None
+
+        # Extract RSSI / signal level
+        rssi: int | None = None
+        sig_lvl = data.get("signal_level")
+        if isinstance(sig_lvl, dict):
+            val = sig_lvl.get("band5") or sig_lvl.get("band2_4") or sig_lvl.get("band6")
+            if isinstance(val, (int, float)):
+                rssi = int(val)
+        elif isinstance(sig_lvl, (int, float)):
+            rssi = int(sig_lvl)
+
+        if rssi is None:
+            raw_sig = (
+                data.get("signal")
+                if data.get("signal") is not None
+                else data.get("rssi")
+                if data.get("rssi") is not None
+                else getattr(item, "signal", None)
+                if getattr(item, "signal", None) is not None
+                else getattr(item, "rssi", None)
             )
+            if isinstance(raw_sig, (int, float)):
+                rssi = int(raw_sig)
 
-            hostname = (
-                getattr(device, "hostname", None)
-                or getattr(device, "name", None)
-                or (device.get("name") if isinstance(device, dict) else None)
+        # AP MAC attribution
+        ap_mac = default_ap_mac
+        if not ap_mac:
+            ap_raw = (
+                data.get("device_mac")
+                or data.get("ap_mac")
+                or data.get("ap_name")
+                or getattr(item, "ap_name", None)
+                or getattr(item, "device_mac", None)
+                or getattr(item, "ap_mac", None)
             )
-
-            rssi = (
-                getattr(device, "signal", None)
-                if getattr(device, "signal", None) is not None
-                else getattr(device, "rssi", None)
-                if getattr(device, "rssi", None) is not None
-                else (
-                    device.get("signal")
-                    if isinstance(device, dict) and device.get("signal") is not None
-                    else device.get("rssi")
-                    if isinstance(device, dict)
-                    else None
-                )
-            )
-
-            ap_mac_raw = (
-                getattr(device, "ap_name", None)
-                or getattr(device, "device_mac", None)
-                or getattr(device, "ap_mac", None)
-                or (
-                    device.get("ap_name")
-                    or device.get("device_mac")
-                    or device.get("ap_mac")
-                    if isinstance(device, dict)
-                    else None
-                )
-            )
-
-            ap_mac: str | None = None
-            if ap_mac_raw:
-                ap_raw_str = str(ap_mac_raw).strip()
-                if ap_raw_str.lower() in node_name_to_mac:
-                    ap_mac = node_name_to_mac[ap_raw_str.lower()]
+            if ap_raw:
+                ap_str = str(ap_raw).strip()
+                if ap_str.lower() in node_name_to_mac:
+                    ap_mac = node_name_to_mac[ap_str.lower()]
                 else:
-                    ap_mac = self.normalize_mac(ap_raw_str) or None
+                    ap_mac = self.normalize_mac(ap_str) or None
 
-            ssid = (
-                getattr(device, "ssid", None)
-                or (device.get("ssid") if isinstance(device, dict) else None)
+        # Band / SSID
+        band = (
+            data.get("frequency")
+            or data.get("band")
+            or data.get("connection_type")
+            or getattr(item, "frequency", None)
+            or getattr(item, "band", None)
+        )
+        if band:
+            band_str = str(band)
+            if "band5" in band_str.lower() or "5g" in band_str.lower():
+                band = "5GHz"
+            elif "band2" in band_str.lower() or "2g" in band_str.lower():
+                band = "2.4GHz"
+            elif "band6" in band_str.lower() or "6g" in band_str.lower():
+                band = "6GHz"
+
+        ssid = data.get("ssid") or getattr(item, "ssid", None)
+        wire_type = data.get("wire_type")
+
+        conn_type = data.get("type") or getattr(item, "type", None)
+        if band is None and conn_type is not None:
+            if hasattr(conn_type, "get_band"):
+                band_str = conn_type.get_band()
+                if band_str:
+                    band = "2.4GHz" if band_str == "2G" else f"{band_str}Hz"
+            elif hasattr(conn_type, "name"):
+                band = str(conn_type.name)
+
+        extra: dict[str, Any] = {"via_deco": True}
+        down_spd = data.get("down_speed") or getattr(item, "down_speed", None)
+        up_spd = data.get("up_speed") or getattr(item, "up_speed", None)
+        if down_spd is not None:
+            extra["down_speed"] = down_spd
+        if up_spd is not None:
+            extra["up_speed"] = up_spd
+        if wire_type:
+            extra["wire_type"] = wire_type
+        if conn_type is not None:
+            extra["client_type"] = (
+                conn_type.value if hasattr(conn_type, "value") else str(conn_type)
             )
 
-            band = (
-                getattr(device, "frequency", None)
-                or getattr(device, "band", None)
-                or (
-                    device.get("frequency") or device.get("band")
-                    if isinstance(device, dict)
-                    else None
-                )
-            )
-
-            conn_type = getattr(device, "type", None) or (
-                device.get("type") if isinstance(device, dict) else None
-            )
-            if band is None and conn_type is not None:
-                if hasattr(conn_type, "get_band"):
-                    band_str = conn_type.get_band()
-                    if band_str:
-                        band = "2.4GHz" if band_str == "2G" else f"{band_str}Hz"
-                elif hasattr(conn_type, "name"):
-                    band = str(conn_type.name)
-
-            extra: dict[str, Any] = {"via_deco": True}
-            if hasattr(device, "down_speed") and device.down_speed is not None:
-                extra["down_speed"] = device.down_speed
-            if hasattr(device, "up_speed") and device.up_speed is not None:
-                extra["up_speed"] = device.up_speed
-            if conn_type is not None:
-                extra["client_type"] = (
-                    conn_type.value if hasattr(conn_type, "value") else str(conn_type)
-                )
-            elif (client_type := getattr(device, "client_type", None)) is not None:
-                extra["client_type"] = client_type
-
-            result.append(
-                ClientInfo(
-                    mac=self.normalize_mac(str(mac_raw)),
-                    ip=str(ip) if ip is not None else None,
-                    hostname=hostname,
-                    rssi=rssi,
-                    ap_mac=ap_mac,
-                    ssid=ssid,
-                    band=band,
-                    extra=extra,
-                )
-            )
-        return result
+        return ClientInfo(
+            mac=mac,
+            ip=str(ip) if ip is not None else None,
+            hostname=hostname,
+            rssi=rssi,
+            ap_mac=ap_mac,
+            ssid=str(ssid) if ssid else None,
+            band=str(band) if band else None,
+            extra=extra,
+        )
 
     async def async_get_ap_stats(self) -> list[APStats]:
         """Return per-Deco-node statistics."""
@@ -251,106 +387,32 @@ class DecoClient(RouterClient):
     def _get_ap_stats_sync(self) -> list[APStats]:
         """Blocking AP stats fetch — runs in executor."""
         result: list[APStats] = []
-        deco_nodes: list[Any] = []
+        deco_nodes = self._fetch_deco_nodes()
 
-        try:
-            if not getattr(self._client, "devices", None):
-                self._client.get_firmware()
-            deco_nodes = getattr(self._client, "devices", []) or []
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.debug(
-                "Deco get_firmware/device_list failed, attempting reauth: %s", exc
-            )
-            try:
-                self._client.authorize()
-                self._client.get_firmware()
-                deco_nodes = getattr(self._client, "devices", []) or []
-            except Exception as auth_exc:  # noqa: BLE001
-                _LOGGER.warning("Failed to fetch Deco node list: %s", auth_exc)
-
-        # Also get status to associate client counts
-        status = None
-        try:
-            status = self._client.get_status()
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.debug("Deco get_status in AP stats failed: %s", exc)
-
-        clients: list[Any] = []
-        if status:
-            clients = (
-                getattr(status, "devices", None)
-                or getattr(status, "clients", [])
-                or []
-            )
+        # Fetch clients to count per-node association
+        clients = self._get_clients_sync()
+        client_counts: dict[str, int] = {}
+        for c in clients:
+            if c.ap_mac:
+                client_counts[c.ap_mac] = client_counts.get(c.ap_mac, 0) + 1
 
         for node in deco_nodes:
-            mac_raw = (
-                node.get("mac")
-                if isinstance(node, dict)
-                else getattr(node, "macaddr", None) or getattr(node, "mac", None)
-            ) or ""
+            mac_raw = node.get("mac") or node.get("macaddr") or ""
             if not mac_raw:
                 continue
 
-            name = (
-                node.get("custom_name")
-                or node.get("name")
-                or node.get("device_model")
-                or node.get("model")
-                if isinstance(node, dict)
-                else getattr(node, "custom_name", None)
-                or getattr(node, "name", None)
-                or getattr(node, "device_model", None)
-            )
-
             norm_node_mac = self.normalize_mac(str(mac_raw))
+            name = self._extract_node_name(node)
 
             # Count clients associated with this node
-            matching_clients = 0
-            for c in clients:
-                c_ap_mac = (
-                    getattr(c, "ap_name", None)
-                    or getattr(c, "device_mac", None)
-                    or getattr(c, "ap_mac", None)
-                    or (
-                        c.get("ap_name")
-                        or c.get("device_mac")
-                        or c.get("ap_mac")
-                        if isinstance(c, dict)
-                        else None
-                    )
-                )
-                if c_ap_mac and (
-                    self.normalize_mac(str(c_ap_mac)) == norm_node_mac
-                    or bool(name and str(c_ap_mac).lower() == str(name).lower())
-                ):
-                    matching_clients += 1
-
-            # If only 1 node exists in the mesh and clients have no specific ap_name,
-            # attribute all connected clients to this node
+            matching_clients = client_counts.get(norm_node_mac, 0)
             if len(deco_nodes) == 1 and matching_clients == 0 and len(clients) > 0:
                 matching_clients = len(clients)
 
-            role = (
-                node.get("role")
-                if isinstance(node, dict)
-                else getattr(node, "role", None)
-            )
-            hw_ver = (
-                node.get("hardware_ver")
-                if isinstance(node, dict)
-                else getattr(node, "hardware_ver", None)
-            )
-            sw_ver = (
-                node.get("software_ver")
-                if isinstance(node, dict)
-                else getattr(node, "software_ver", None)
-            )
-            ip = (
-                node.get("ip")
-                if isinstance(node, dict)
-                else getattr(node, "ipaddr", None) or getattr(node, "ip", None)
-            )
+            role = node.get("role")
+            hw_ver = node.get("hardware_ver")
+            sw_ver = node.get("software_ver")
+            ip = node.get("device_ip") or node.get("ip") or node.get("ipaddr")
 
             result.append(
                 APStats(
@@ -367,20 +429,24 @@ class DecoClient(RouterClient):
                 )
             )
 
-        # Fallback if no mesh nodes found in device_list but status has LAN MAC
-        if not result and status:
-            lan_mac = getattr(status, "lan_macaddr", None) or getattr(
-                status, "wan_macaddr", None
-            )
-            if lan_mac:
-                result.append(
-                    APStats(
-                        mac=self.normalize_mac(str(lan_mac)),
-                        name="Deco Master",
-                        client_count=len(clients),
-                        extra={"via_deco": True, "role": "master"},
-                    )
+        # Fallback if no mesh nodes found in device_list but LAN MAC exists
+        if not result:
+            try:
+                status = self._client.get_status()
+                lan_mac = getattr(status, "lan_macaddr", None) or getattr(
+                    status, "wan_macaddr", None
                 )
+                if lan_mac:
+                    result.append(
+                        APStats(
+                            mac=self.normalize_mac(str(lan_mac)),
+                            name="Deco Master",
+                            client_count=len(clients),
+                            extra={"via_deco": True, "role": "master"},
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("LAN MAC fallback failed: %s", exc)
 
         return result
 
