@@ -370,7 +370,7 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             current["vacuum_room_mappings"] = updated_map
             return self.async_create_entry(title="", data=current)
 
-        schema_dict = {}
+        schema_dict: dict[Any, Any] = {}
         for seg_id in segments:
             field_key = f"vac_seg_{seg_id}"
             default_area = current_vac_mappings.get(str(seg_id), "")
