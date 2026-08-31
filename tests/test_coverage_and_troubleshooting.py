@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -32,7 +32,7 @@ def test_integer_device_identifier_does_not_crash(hass: HomeAssistant) -> None:
     mock_dev_reg.devices = {"device_1": mock_device}
 
     with patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg):
-        area_id, floor_id = auto_link_ap_to_ha_device(hass, "b0:a7:b9:bb:36:58", "Office Deco")
+        area_id, _floor_id = auto_link_ap_to_ha_device(hass, "b0:a7:b9:bb:36:58", "Office Deco")
         assert area_id == "office"
 
 

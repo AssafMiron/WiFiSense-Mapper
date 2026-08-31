@@ -24,7 +24,7 @@ async def async_get_config_entry_diagnostics(
 
     pillow_installed = False
     try:
-        import PIL  # noqa: F401
+        import PIL
 
         pillow_installed = True
     except ImportError:

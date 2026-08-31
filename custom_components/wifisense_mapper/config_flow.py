@@ -14,6 +14,7 @@ from .const import (
     CONF_ANOMALY_THRESHOLD,
     CONF_BASELINE_DAYS,
     CONF_HEATMAP_ENABLED,
+    CONF_PERSON_TAGS,
     CONF_POLL_INTERVAL,
     CONF_ROUTER_HOST,
     CONF_ROUTER_PASSWORD,
@@ -249,7 +250,13 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         """Main options menu."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["general", "ap_mapping", "vacuum_mapping", "troubleshooting"],
+            menu_options=[
+                "general",
+                "person_tracking",
+                "ap_mapping",
+                "vacuum_mapping",
+                "troubleshooting",
+            ],
         )
 
     async def async_step_general(
@@ -308,6 +315,71 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             }
         )
         return self.async_show_form(step_id="general", data_schema=schema)
+
+    async def async_step_person_tracking(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Map WiFi client devices / wearables to Home Assistant Person entities."""
+        current = dict(self.config_entry.options)
+        current_person_tags: dict[str, Any] = dict(current.get(CONF_PERSON_TAGS, {}))
+
+        # Discover all HA person entities
+        person_entities = self.hass.states.async_entity_ids("person")
+        person_options = {"": "None (Not Tracked as Person)"}
+        for pe in person_entities:
+            state = self.hass.states.get(pe)
+            name = state.name if state and state.name else pe
+            person_options[pe] = f"{name} ({pe})"
+
+        clients = self._get_known_clients()
+
+        if user_input is not None:
+            updated_tags = dict(current_person_tags)
+            for mac in clients:
+                field_key = f"person_{mac.replace(':', '_')}"
+                if field_key in user_input:
+                    val = user_input[field_key]
+                    if val:
+                        # Extract friendly name
+                        person_name = person_options.get(val, val).split(" (")[0]
+                        updated_tags[mac] = {
+                            "person_entity_id": val,
+                            "person_name": person_name,
+                        }
+                    elif mac in updated_tags:
+                        updated_tags.pop(mac)
+            current[CONF_PERSON_TAGS] = updated_tags
+            return self.async_create_entry(title="", data=current)
+
+        schema_dict: dict[Any, Any] = {}
+        for mac in clients:
+            field_key = f"person_{mac.replace(':', '_')}"
+            existing = current_person_tags.get(mac, {})
+            existing_person = (
+                existing
+                if isinstance(existing, str)
+                else existing.get("person_entity_id", "")
+            )
+            schema_dict[vol.Optional(field_key, default=existing_person)] = vol.In(
+                person_options
+            )
+
+        if not schema_dict:
+            schema_dict[vol.Optional("info_no_clients", default="No WiFi clients detected yet")] = str
+
+        client_legend = "\n".join(
+            f"• `{mac.replace(':', '_')}` ➔ **{label}**"
+            for mac, label in clients.items()
+        ) or "None detected"
+
+        return self.async_show_form(
+            step_id="person_tracking",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={
+                "client_count": str(len(clients)),
+                "client_legend": client_legend,
+            },
+        )
 
     async def async_step_ap_mapping(
         self, user_input: dict[str, Any] | None = None
@@ -533,5 +605,25 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             return [s.entity_id for s in sources]
         except Exception:  # noqa: BLE001
             return []
+
+    def _get_known_clients(self) -> dict[str, str]:
+        """Return dict of client_mac -> display name / hostname."""
+        clients: dict[str, str] = {}
+        person_tags = self.config_entry.options.get(CONF_PERSON_TAGS, {})
+        for mac, data in person_tags.items():
+            name = data.get("person_name") if isinstance(data, dict) else str(data)
+            clients[mac] = name or f"Tag ({mac})"
+        try:
+            entry_data = self.hass.data.get(DOMAIN, {}).get(
+                self.config_entry.entry_id, {}
+            )
+            coordinator = entry_data.get("coordinator")
+            if coordinator and coordinator.router_clients:
+                for mac, client in coordinator.router_clients.items():
+                    name_part = client.hostname or client.ip or "Client"
+                    clients[mac] = f"{name_part} ({mac})"
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Could not read client list: %s", exc)
+        return clients
 
 

@@ -182,3 +182,31 @@ def auto_link_ap_to_ha_device(
 
     return (None, None)
 
+
+def get_area_name_from_id(hass: HomeAssistant, area_id: str | None) -> str:
+    """Return the friendly name for an area ID or fallback."""
+    if not area_id:
+        return "Home"
+    try:
+        from homeassistant.helpers import area_registry as ar
+
+        reg = ar.async_get(hass)
+        area = reg.async_get_area(area_id)
+        return area.name if area and area.name else area_id
+    except Exception:  # noqa: BLE001
+        return area_id
+
+
+def get_floor_name_from_id(hass: HomeAssistant, floor_id: str | None) -> str:
+    """Return the friendly name for a floor ID or fallback."""
+    if not floor_id or floor_id == "default":
+        return "Ground Floor"
+    try:
+        from homeassistant.helpers import floor_registry as fr
+
+        reg = fr.async_get(hass)
+        floor = reg.async_get_floor(floor_id)
+        return floor.name if floor and floor.name else floor_id
+    except Exception:  # noqa: BLE001
+        return floor_id
+

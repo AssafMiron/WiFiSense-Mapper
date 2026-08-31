@@ -149,11 +149,25 @@ class SpatialGrid:
         row = min(int(y_m / self.resolution_m), self.rows - 1)
         self._ap_positions[ap_mac.lower()] = (col, row)
 
+    def get_ap_position_m(self, ap_mac: str) -> tuple[float, float] | None:
+        """Return the physical position of an AP in meters (x_m, y_m)."""
+        pos = self._ap_positions.get(ap_mac.lower())
+        if pos is None:
+            return None
+        return (pos[0] * self.resolution_m, pos[1] * self.resolution_m)
+
     def set_csi_position(self, device_id: str, x_m: float, y_m: float) -> None:
         """Register the physical position of a CSI sensor node."""
         col = min(int(x_m / self.resolution_m), self.cols - 1)
         row = min(int(y_m / self.resolution_m), self.rows - 1)
         self._csi_positions[device_id] = (col, row)
+
+    def get_csi_position_m(self, device_id: str) -> tuple[float, float] | None:
+        """Return the physical position of a CSI node in meters (x_m, y_m)."""
+        pos = self._csi_positions.get(device_id)
+        if pos is None:
+            return None
+        return (pos[0] * self.resolution_m, pos[1] * self.resolution_m)
 
     def update_rssi(
         self,

@@ -48,14 +48,21 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    coordinator: WiFiSenseCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
+
+    from .const import CONF_PERSON_TAGS
 
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
 
     track_all = entry.options.get("track_all_clients", False)
-    tracked_macs: list[str] = entry.options.get("tracked_client_macs", [])
+    tracked_macs: list[str] = list(entry.options.get("tracked_client_macs", []))
+    person_tags: dict[str, Any] = entry.options.get(CONF_PERSON_TAGS, {})
+    for pm in person_tags:
+        if pm not in tracked_macs:
+            tracked_macs.append(pm)
 
     # 1. Automatically prune previously registered trackers and devices that are no longer wanted
     existing_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
@@ -169,6 +176,13 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
     @property
     def location_name(self) -> str | None:
         """Return the area/room name for this device."""
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        if self._mac in person_tracking:
+            p_state = person_tracking[self._mac]
+            if p_state.activity == "Away" or p_state.confidence <= 0.0:
+                return "not_home"
+            return p_state.area_name
+
         client = self.coordinator.router_clients.get(self._mac)
         if client is None:
             return "not_home"
@@ -193,21 +207,42 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {"mac": self._mac}
         client = self.coordinator.router_clients.get(self._mac)
-        if not client:
-            return {"mac": self._mac}
-        return {
-            "mac": self._mac,
-            "ip": client.ip,
-            "ssid": client.ssid,
-            "band": client.band,
-            "rssi": client.rssi,
-            "ap_mac": client.ap_mac,
-            "ap_name": self.coordinator.ap_stats.get(client.ap_mac or "", None)
-            and getattr(
-                self.coordinator.ap_stats.get(client.ap_mac or ""), "name", None
-            ),
-        }
+        if client:
+            attrs.update(
+                {
+                    "ip": client.ip,
+                    "ssid": client.ssid,
+                    "band": client.band,
+                    "rssi": client.rssi,
+                    "ap_mac": client.ap_mac,
+                    "ap_name": self.coordinator.ap_stats.get(client.ap_mac or "", None)
+                    and getattr(
+                        self.coordinator.ap_stats.get(client.ap_mac or ""), "name", None
+                    ),
+                }
+            )
+
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        if self._mac in person_tracking:
+            p_state = person_tracking[self._mac]
+            attrs.update(
+                {
+                    "person_name": p_state.person_name,
+                    "activity": p_state.activity,
+                    "micro_zone": p_state.micro_zone,
+                    "x_m": p_state.x_m,
+                    "y_m": p_state.y_m,
+                    "x_pct": p_state.x_pct,
+                    "y_pct": p_state.y_pct,
+                    "confidence": p_state.confidence,
+                    "dwell_time_s": int(p_state.dwell_time_s),
+                    "speed_mps": p_state.speed_mps,
+                }
+            )
+
+        return attrs
 
     def _area_name(self, area_id: str) -> str:
         try:

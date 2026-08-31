@@ -38,6 +38,8 @@ async def async_setup_entry(
     """Set up sensor entities from config entry."""
     coordinator: WiFiSenseCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
+    entities: list[SensorEntity] = []
+
     # Main integration hub device info
     hub_device_info = DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
@@ -47,6 +49,27 @@ async def async_setup_entry(
         entry_type=DeviceEntryType.SERVICE,
     )
     entities.append(MeshCoverageSensor(coordinator, entry, hub_device_info))
+
+    # Per-person tracking sensors
+    trackers = coordinator.localization_engine.trackers
+    for mac, tracker in trackers.items():
+        person_name = tracker.person_name
+        person_dev_info = _person_device_info(entry, mac, person_name)
+        entities.append(
+            WifiSensePersonLocationSensor(
+                coordinator, entry, mac, person_name, person_dev_info
+            )
+        )
+        entities.append(
+            WifiSensePersonActivitySensor(
+                coordinator, entry, mac, person_name, person_dev_info
+            )
+        )
+        entities.append(
+            WifiSensePersonCoordinatesSensor(
+                coordinator, entry, mac, person_name, person_dev_info
+            )
+        )
 
     # Per-area coverage sensors
     from .registry_helpers import get_all_areas
@@ -369,8 +392,135 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
         }
 
 
-# ─── Device info helpers ───────────────────────────────────────────────────────
+class WifiSensePersonLocationSensor(WiFiSenseBaseSensor):
+    """Current room/area location and micro-zone for a tracked person."""
 
+    _attr_icon = "mdi:account-location"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        mac: str,
+        person_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"person_location_{mac}", device_info)
+        self._mac = mac
+        self._person_name = person_name
+        self._attr_name = f"{person_name} Location"
+
+    @property
+    def native_value(self) -> str:
+        """Return current room / transition description."""
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state:
+            return "Unknown"
+        if state.activity == "Away" or state.confidence <= 0.0:
+            return "Away"
+        if state.activity == "Room Transitioning" and state.last_area_name and state.last_area_name != state.area_name:
+            return f"{state.last_area_name} → {state.area_name}"
+        return state.area_name
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state:
+            return {"mac": self._mac}
+        return state.to_dict()
+
+
+class WifiSensePersonActivitySensor(WiFiSenseBaseSensor):
+    """Real-time physical activity state for a tracked person."""
+
+    _attr_icon = "mdi:motion-sensor"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        mac: str,
+        person_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"person_activity_{mac}", device_info)
+        self._mac = mac
+        self._person_name = person_name
+        self._attr_name = f"{person_name} Activity"
+
+    @property
+    def native_value(self) -> str:
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state:
+            return "Unknown"
+        return state.activity
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state:
+            return {"mac": self._mac}
+        return {
+            "mac": self._mac,
+            "confidence": state.confidence,
+            "dwell_time_s": int(state.dwell_time_s),
+            "speed_mps": state.speed_mps,
+            "micro_zone": state.micro_zone,
+            "room": state.area_name,
+            "floor": state.floor_name,
+        }
+
+
+class WifiSensePersonCoordinatesSensor(WiFiSenseBaseSensor):
+    """Normalized and metric coordinates for floorplan overlays."""
+
+    _attr_icon = "mdi:crosshairs-gps"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        mac: str,
+        person_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"person_coordinates_{mac}", device_info)
+        self._mac = mac
+        self._person_name = person_name
+        self._attr_name = f"{person_name} Coordinates"
+
+    @property
+    def native_value(self) -> str:
+        """Return formatted (x, y) coordinates."""
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state:
+            return "0.00, 0.00"
+        return f"{state.x_m:.2f}, {state.y_m:.2f}"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state:
+            return {"mac": self._mac, "x_pct": 50.0, "y_pct": 50.0}
+        return {
+            "mac": self._mac,
+            "x_m": state.x_m,
+            "y_m": state.y_m,
+            "x_pct": state.x_pct,
+            "y_pct": state.y_pct,
+            "floor_id": state.floor_id,
+            "floor_name": state.floor_name,
+            "speed_mps": state.speed_mps,
+        }
+
+
+# ─── Device info helpers ───────────────────────────────────────────────────────
 
 
 def _get_floor_name(hass: HomeAssistant, floor_id: str) -> str:
@@ -411,4 +561,13 @@ def _ap_device_info(entry: ConfigEntry, ap_mac: str, ap_name: str) -> DeviceInfo
         name=f"WiFiSense AP — {ap_name}",
         manufacturer=MANUFACTURER,
         model="WiFi Access Point",
+    )
+
+
+def _person_device_info(entry: ConfigEntry, mac: str, person_name: str) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{entry.entry_id}_person_{mac}")},
+        name=f"WiFiSense — {person_name}",
+        manufacturer=MANUFACTURER,
+        model="WiFi Person Tracker",
     )

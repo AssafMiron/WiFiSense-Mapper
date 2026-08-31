@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-08-31
+
+### Added
+- **Indoor Person Localization & Wearables Tracking**:
+  - Added real-time person tracking binding discovered WiFi client MACs (smartwatches, smartphones, ESP32 tags) to Home Assistant `person.*` entities in Options Flow.
+  - Implemented 2D Constant-Velocity Kalman filtering (`KalmanFilter2D`) to smooth RSSI telemetry and eliminate room boundary ping-pong / jitter.
+  - Implemented multi-floor feasibility guards (`FloorTransitionGuard`) preventing spurious multi-floor ceiling bleed jumps.
+  - Added micro-zone and furniture proximity detection (`MicroZone`) for sub-room localization (e.g., *"At Desk"*, *"On Couch"*).
+  - Added real-time physical activity classification (`ActivityClassifier`): `Stationary / Sitting`, `Walking / Moving`, `Room Transitioning`, and `Away`.
+- **Entities & Dashboard Visualizations**:
+  - Added `sensor.wifisense_<person>_location` exposing current room / transition name with confidence, dwell time, and speed attributes.
+  - Added `sensor.wifisense_<person>_activity` for automation triggers and presence telemetry.
+  - Added `sensor.wifisense_<person>_coordinates` with normalized `x_pct` and `y_pct` coordinates (0–100%) for Lovelace `picture-elements` card overlays.
+  - Upgraded `WifiSenseDeviceTracker` to integrate filtered indoor person location and coordinates attributes.
+- **Unit & Integration Tests**:
+  - Added comprehensive test suites in `tests/test_localization.py` and `tests/test_person_tracking.py`.
+
+---
+
 ## [0.1.1] - 2026-08-30
 
 ### Fixed
