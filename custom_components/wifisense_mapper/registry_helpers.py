@@ -125,24 +125,28 @@ def auto_link_ap_to_ha_device(
     from homeassistant.helpers import device_registry as dr
 
     dev_reg = dr.async_get(hass)
-    norm_mac = ap_mac.lower().replace("-", ":").replace(".", ":")
+    norm_mac = str(ap_mac).lower().replace("-", ":").replace(".", ":")
 
     # 1. Search HA Device Registry by MAC address in connections or identifiers
     matched_device = None
     for device in dev_reg.devices.values():
         # Check connections
-        for conn_type, conn_val in device.connections:
-            if conn_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
-                matched_device = device
-                break
+        for conn in device.connections:
+            if len(conn) >= 2:
+                conn_val = str(conn[1])
+                if conn_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
+                    matched_device = device
+                    break
         if matched_device:
             break
 
         # Check identifiers
-        for _, ident_val in device.identifiers:
-            if ident_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
-                matched_device = device
-                break
+        for ident in device.identifiers:
+            if len(ident) >= 2:
+                ident_val = str(ident[1])
+                if ident_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
+                    matched_device = device
+                    break
         if matched_device:
             break
 

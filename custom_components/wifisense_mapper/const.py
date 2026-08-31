@@ -81,7 +81,14 @@ VACUUM_PLATFORMS: Final = [
     "roborock",
     "mqtt_vacuum_camera",
     "valetudo",
+    "valetudo_vacuum_camera",
     "dreame",
+    "dreame_vacuum",
+    "xiaomi_miio",
+    "roomba",
+    "ecovacs",
+    "neato",
+    "vacuum",
 ]
 
 # ─── Storage keys ─────────────────────────────────────────────────────────────

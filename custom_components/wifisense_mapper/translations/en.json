@@ -32,11 +32,12 @@
     "step": {
       "init": {
         "title": "WiFiSense Mapper Configuration",
-        "description": "Select an area to configure sensing parameters, Deco/AP node placement, or vacuum room alignment.",
+        "description": "Select an area to configure sensing parameters, Deco/AP node placement, vacuum room alignment, or inspect logs and system health.",
         "menu_options": {
           "general": "General & Sensing Settings",
           "ap_mapping": "Access Points & Deco Hub Placements",
-          "vacuum_mapping": "Vacuum Room Alignment (Roborock / Valetudo)"
+          "vacuum_mapping": "Vacuum Room Alignment (Roborock / Valetudo)",
+          "troubleshooting": "Diagnostics & System Health (Logs, Pillow)"
         }
       },
       "general": {
@@ -47,32 +48,64 @@
           "anomaly_threshold": "Anomaly detection threshold (z-score)",
           "baseline_days": "Baseline learning window (days)",
           "vacuum_entities": "Vacuum map entities (optional)"
+        },
+        "data_description": {
+          "poll_interval": "How often to poll the router and read CSI sensor states (10–3600 seconds).",
+          "anomaly_threshold": "Z-score threshold for object/furniture anomaly alerts. Higher = fewer alerts. Recommended: 3.0.",
+          "baseline_days": "Number of days of data used to establish the normal signal baseline.",
+          "vacuum_entities": "Select vacuum map image/camera entities to use for room layout validation."
         }
       },
       "ap_mapping": {
         "title": "Access Point & Deco Hub Placements",
-        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node will contribute to presence and distance analysis in that room."
+        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node contribute to presence and room localization.\n\nDiscovered Hubs:\n{ap_legend}"
       },
       "vacuum_mapping": {
         "title": "Vacuum Room Alignment",
-        "description": "Match detected vacuum map room segments (e.g. Roborock rooms) to Home Assistant Areas to align physical boundaries with WiFi telemetry."
+        "description": "Match detected vacuum map room segments (e.g. Roborock rooms) to Home Assistant Areas to align physical boundaries with WiFi telemetry.\n\nDiscovered Room Segments:\n{seg_legend}"
+      },
+      "troubleshooting": {
+        "title": "Diagnostics & System Health",
+        "description": "System Status:\n\n• **Pillow (Image Rendering)**: {pillow_status}\n• **Router Client**: {router_status}\n• **Mesh Coverage**: {coverage_info}\n\n### Recent WiFiSense Logs:\n```\n{recent_logs}\n```\n\n*(Click Submit to return to the Options Menu)*"
       }
     }
   },
   "entity": {
     "sensor": {
-      "wifi_client_count": {"name": "WiFi Client Count"},
-      "rssi_signal": {"name": "RSSI Signal"},
-      "csi_motion_score": {"name": "CSI Motion Score"},
-      "anomaly_score": {"name": "Anomaly Score"}
+      "wifi_client_count": {
+        "name": "WiFi Client Count"
+      },
+      "rssi_signal": {
+        "name": "RSSI Signal"
+      },
+      "csi_motion_score": {
+        "name": "CSI Motion Score"
+      },
+      "anomaly_score": {
+        "name": "Anomaly Score"
+      },
+      "mesh_coverage": {
+        "name": "WiFi Mesh Coverage Status"
+      },
+      "area_coverage": {
+        "name": "Area WiFi Coverage"
+      }
     },
     "binary_sensor": {
-      "presence": {"name": "Presence"},
-      "object_anomaly": {"name": "Object Anomaly"},
-      "csi_motion": {"name": "CSI Motion"}
+      "presence": {
+        "name": "Presence"
+      },
+      "object_anomaly": {
+        "name": "Object Anomaly"
+      },
+      "csi_motion": {
+        "name": "CSI Motion"
+      }
     },
     "image": {
-      "heatmap": {"name": "{layer} Heatmap"}
+      "heatmap": {
+        "name": "{layer} Heatmap"
+      }
     }
   }
 }

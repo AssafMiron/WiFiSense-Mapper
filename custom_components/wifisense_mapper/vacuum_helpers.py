@@ -85,15 +85,15 @@ def discover_vacuum_maps(hass: HomeAssistant) -> list[VacuumMapSource]:
     found: list[VacuumMapSource] = []
 
     for entry in ent_reg.entities.values():
-        if entry.platform not in VACUUM_PLATFORMS:
-            continue
         if entry.domain not in ("image", "camera"):
             continue
 
-        # Look for "map" in the entity name or unique_id as a heuristic
+        is_vac_platform = entry.platform in VACUUM_PLATFORMS
         name_lower = (entry.name or entry.original_name or entry.entity_id).lower()
         uid_lower = (entry.unique_id or "").lower()
-        if "map" not in name_lower and "map" not in uid_lower:
+        is_map_entity = "map" in name_lower or "map" in uid_lower or "floor" in name_lower
+
+        if not is_vac_platform and not is_map_entity:
             continue
 
         state = hass.states.get(entry.entity_id)
@@ -102,11 +102,25 @@ def discover_vacuum_maps(hass: HomeAssistant) -> list[VacuumMapSource]:
         # Extract room segments from state attributes (Roborock / Valetudo style)
         segments = _extract_segments(attrs)
 
+        # Fallback: check related vacuum entities on the same device
+        if not segments and entry.device_id:
+            for other_entry in ent_reg.entities.values():
+                if (
+                    other_entry.device_id == entry.device_id
+                    and other_entry.domain == "vacuum"
+                ):
+                    vac_state = hass.states.get(other_entry.entity_id)
+                    if vac_state:
+                        segments = _extract_segments(vac_state.attributes)
+                        if segments:
+                            break
+
         source = VacuumMapSource(
             entity_id=entry.entity_id,
             platform=entry.platform,
             map_name=attrs.get("map_name")
             or attrs.get("friendly_name")
+            or entry.name
             or entry.entity_id,
             room_segments=segments,
             extra={

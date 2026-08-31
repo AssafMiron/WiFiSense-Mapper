@@ -38,7 +38,30 @@ async def async_setup_entry(
     """Set up sensor entities from config entry."""
     coordinator: WiFiSenseCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
-    entities: list[SensorEntity] = []
+    # Main integration hub device info
+    hub_device_info = DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="WiFiSense Mapper",
+        manufacturer=MANUFACTURER,
+        model=MODEL,
+        entry_type=DeviceEntryType.SERVICE,
+    )
+    entities.append(MeshCoverageSensor(coordinator, entry, hub_device_info))
+
+    # Per-area coverage sensors
+    from .registry_helpers import get_all_areas
+
+    for area in get_all_areas(hass):
+        area_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}_area_{area.id}")},
+            name=f"WiFiSense — {area.name}",
+            manufacturer=MANUFACTURER,
+            model="Area Coverage",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+        entities.append(
+            AreaCoverageSensor(coordinator, entry, area.id, area.name, area_device_info)
+        )
 
     # Per-floor sensors
     for floor_id in coordinator.grids:
@@ -249,7 +272,105 @@ class AnomalyScoreSensor(WiFiSenseBaseSensor):
         }
 
 
+class MeshCoverageSensor(WiFiSenseBaseSensor):
+    """Overall mesh coverage, cross-coverage, and dead-zone detector."""
+
+    _attr_name = "WiFi Mesh Coverage Status"
+    _attr_icon = "mdi:access-point-network"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, "mesh_coverage_status", device_info)
+
+    @property
+    def native_value(self) -> str:
+        data = self.coordinator.data or {}
+        cov = data.get("coverage", {})
+        uncovered = cov.get("uncovered_count", 0)
+        total = cov.get("total_areas", 0)
+        cross = cov.get("cross_covered_count", 0)
+
+        if total == 0:
+            return "No areas configured"
+        if uncovered > 0:
+            return f"{uncovered} dead zone(s) detected"
+        if cross > 0:
+            return f"Full coverage ({cross} cross-covered)"
+        return "Covered"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        return data.get("coverage", {})
+
+
+class AreaCoverageSensor(WiFiSenseBaseSensor):
+    """Deco coverage status for an individual Home Assistant Area."""
+
+    _attr_icon = "mdi:wifi-marker"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        area_id: str,
+        area_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"area_coverage_{area_id}", device_info)
+        self._area_id = area_id
+        self._area_name = area_name
+        self._attr_name = f"{area_name} WiFi Coverage"
+
+    @property
+    def native_value(self) -> str:
+        data = self.coordinator.data or {}
+        cov = data.get("coverage", {})
+        area_ap_map = cov.get("area_ap_map", {})
+        aps = area_ap_map.get(self._area_id, [])
+
+        if len(aps) >= 2:
+            return "Cross-Covered"
+        if len(aps) == 1:
+            return "Covered"
+        return "Uncovered / Dead Zone"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        cov = data.get("coverage", {})
+        area_ap_map = cov.get("area_ap_map", {})
+        aps = area_ap_map.get(self._area_id, [])
+        ap_stats = data.get("ap_stats", {})
+        clients = data.get("router_clients", {})
+
+        assigned_ap_details = [
+            {
+                "mac": mac,
+                "name": getattr(ap_stats.get(mac), "name", mac),
+                "client_count": getattr(ap_stats.get(mac), "client_count", 0),
+            }
+            for mac in aps
+            if mac in ap_stats
+        ]
+
+        client_count = sum(1 for c in clients.values() if c.area_id == self._area_id)
+
+        return {
+            "area_id": self._area_id,
+            "area_name": self._area_name,
+            "ap_count": len(aps),
+            "assigned_aps": assigned_ap_details,
+            "active_clients_in_area": client_count,
+        }
+
+
 # ─── Device info helpers ───────────────────────────────────────────────────────
+
 
 
 def _get_floor_name(hass: HomeAssistant, floor_id: str) -> str:
