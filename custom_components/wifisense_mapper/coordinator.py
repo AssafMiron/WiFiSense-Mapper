@@ -22,6 +22,7 @@ Thread safety:
 from __future__ import annotations
 
 import logging
+from collections import deque
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .clients.base import APStats, ClientInfo
 from .const import (
+    CONF_MICRO_ZONES,
+    CONF_PERSON_TAGS,
     DEFAULT_ANOMALY_THRESHOLD,
     DEFAULT_GRID_RESOLUTION,
     DEFAULT_POLL_INTERVAL,
@@ -43,6 +46,7 @@ from .csi_discovery import CSINodeInfo, discover_csi_nodes
 from .engine.baseline import BaselineLearner
 from .engine.grid import SpatialGrid
 from .engine.heatmap import HeatmapRenderer
+from .engine.localization import PersonLocalizationEngine
 from .engine.vacuum_align import VacuumMapAligner
 from .registry_helpers import get_all_floors, get_floor_for_area
 from .vacuum_helpers import VacuumMapSource, discover_vacuum_maps
@@ -53,6 +57,32 @@ if TYPE_CHECKING:
     from .clients.base import RouterClient
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class LogBufferHandler(logging.Handler):
+    """In-memory ring buffer capturing recent log records for UI troubleshooting."""
+
+    def __init__(self, capacity: int = 50) -> None:
+        super().__init__()
+        self.buffer: deque[str] = deque(maxlen=capacity)
+        self.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            self.buffer.append(msg)
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+
+_LOG_BUFFER = LogBufferHandler(capacity=50)
+_LOGGER.addHandler(_LOG_BUFFER)
+logging.getLogger("custom_components.wifisense_mapper").addHandler(_LOG_BUFFER)
 
 
 class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -97,6 +127,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.heatmap_images: dict[str, dict[str, bytes]] = {}
         # floor_id → {layer_name → PNG bytes}
 
+        self.localization_engine = PersonLocalizationEngine()
         self._renderer = HeatmapRenderer()
         self._scanning: bool = True
 
@@ -113,6 +144,30 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Discover vacuum map sources
         self.vacuum_sources = discover_vacuum_maps(self.hass)
         _LOGGER.info("Found %d vacuum map source(s)", len(self.vacuum_sources))
+
+        # Configure micro zones
+        micro_zones: list[dict[str, Any]] = self.entry.options.get(
+            CONF_MICRO_ZONES, self.entry.data.get(CONF_MICRO_ZONES, [])
+        )
+        self.localization_engine.set_micro_zones(micro_zones)
+
+        # Configure person tags
+        person_tags: dict[str, Any] = self.entry.options.get(
+            CONF_PERSON_TAGS, self.entry.data.get(CONF_PERSON_TAGS, {})
+        )
+        for mac, tag_data in person_tags.items():
+            if isinstance(tag_data, str):
+                self.localization_engine.configure_person(
+                    mac=mac,
+                    person_entity_id=tag_data,
+                    person_name=tag_data.split(".")[-1].replace("_", " ").title(),
+                )
+            elif isinstance(tag_data, dict):
+                self.localization_engine.configure_person(
+                    mac=mac,
+                    person_entity_id=tag_data.get("person_entity_id"),
+                    person_name=tag_data.get("person_name"),
+                )
 
         # Initialize grids per floor
         floors = get_all_floors(self.hass)
@@ -164,7 +219,10 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 4. Feed CSI scores to grids
         self._feed_csi_to_grids()
 
-        # 5. Update baselines and compute anomaly scores
+        # 5. Update person localization & activity engine
+        self._update_person_localizations()
+
+        # 6. Update baselines and compute anomaly scores
         anomaly_scores: dict[str, dict] = {}
         for floor_id, grid in self.grids.items():
             bl = self.baselines[floor_id]
@@ -172,7 +230,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             scores = bl.compute_anomaly_scores(grid)
             anomaly_scores[floor_id] = scores
 
-        # 6. Render heatmaps (in executor — non-blocking)
+        # 7. Render heatmaps (in executor — non-blocking)
         if self.heatmap_enabled:
             await self._async_render_heatmaps(anomaly_scores)
 
@@ -322,6 +380,84 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if floor:
                     node.floor_id = floor.floor_id
 
+    def _update_person_localizations(self) -> None:
+        """Calculate real-time position, micro-zone, and activity for all configured person trackers."""
+        from .registry_helpers import get_area_name_from_id, get_floor_name_from_id
+
+        for mac, tracker in self.localization_engine.trackers.items():
+            client = self.router_clients.get(mac)
+            ap_mac = client.ap_mac if client else None
+            rssi = client.rssi if client else None
+            floor_id = (client and client.floor_id) or (client and self._resolve_floor_for_client(client)) or "default"
+            floor_name = get_floor_name_from_id(self.hass, floor_id)
+            area_id = client.area_id if client else None
+            area_name = get_area_name_from_id(self.hass, area_id) if area_id else "Home"
+
+            grid = self.grids.get(floor_id) or self.grids.get("default")
+            grid_w = grid.width_m if grid else 10.0
+            grid_h = grid.height_m if grid else 10.0
+
+            ap_pos = grid.get_ap_position_m(ap_mac) if (grid and ap_mac) else None
+
+            # Get local CSI motion score on this floor / area
+            csi_score = 0.0
+            for node in self.csi_nodes:
+                if node.floor_id == floor_id or node.area_id == area_id:
+                    score = getattr(node, "motion_score_value", None)
+                    if score is not None:
+                        csi_score = max(csi_score, float(score))
+
+            tracker.update(
+                ap_mac=ap_mac,
+                rssi=rssi,
+                floor_id=floor_id,
+                floor_name=floor_name,
+                area_id=area_id,
+                area_name=area_name,
+                ap_pos_m=ap_pos,
+                grid_width_m=grid_w,
+                grid_height_m=grid_h,
+                csi_motion_score=csi_score,
+                micro_zones=self.localization_engine.micro_zones,
+            )
+
+    @property
+    def is_scanning(self) -> bool:
+        """Return True if scanning is active."""
+        return self._scanning
+
+    def get_recent_logs(self, max_lines: int = 30) -> list[str]:
+        """Return recent log records captured by the in-memory buffer."""
+        items = list(_LOG_BUFFER.buffer)
+        return items[-max_lines:] if len(items) > max_lines else items
+
+    def get_area_coverage_summary(self) -> dict[str, Any]:
+        """Compute area-level mesh coverage, cross-coverage, and dead-zones."""
+        from .registry_helpers import get_all_areas
+
+        all_areas = {a.id: a.name for a in get_all_areas(self.hass)}
+        area_ap_map: dict[str, list[str]] = {aid: [] for aid in all_areas}
+
+        for mac, ap in self.ap_stats.items():
+            if ap.area_id and ap.area_id in area_ap_map:
+                area_ap_map[ap.area_id].append(mac)
+
+        covered = [aid for aid, aps in area_ap_map.items() if len(aps) >= 1]
+        cross_covered = [aid for aid, aps in area_ap_map.items() if len(aps) >= 2]
+        uncovered = [aid for aid, aps in area_ap_map.items() if len(aps) == 0]
+
+        return {
+            "area_ap_map": area_ap_map,
+            "covered_area_ids": covered,
+            "cross_covered_area_ids": cross_covered,
+            "uncovered_area_ids": uncovered,
+            "covered_count": len(covered),
+            "cross_covered_count": len(cross_covered),
+            "uncovered_count": len(uncovered),
+            "total_areas": len(all_areas),
+            "all_areas": all_areas,
+        }
+
     def _current_data(self, anomaly_scores: dict | None = None) -> dict[str, Any]:
         """Return the coordinator's data snapshot for entity polling."""
         return {
@@ -333,6 +469,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "anomaly_scores": anomaly_scores or {},
             "heatmap_images": self.heatmap_images,
             "scanning": self._scanning,
+            "coverage": self.get_area_coverage_summary(),
+            "person_tracking": self.localization_engine.all_states(),
         }
 
     # ─── Scanning control ─────────────────────────────────────────────────────
@@ -346,3 +484,4 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Pause data collection without unloading the integration."""
         self._scanning = False
         _LOGGER.info("WiFiSense scanning paused")
+

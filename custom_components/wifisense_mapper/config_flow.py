@@ -14,6 +14,7 @@ from .const import (
     CONF_ANOMALY_THRESHOLD,
     CONF_BASELINE_DAYS,
     CONF_HEATMAP_ENABLED,
+    CONF_PERSON_TAGS,
     CONF_POLL_INTERVAL,
     CONF_ROUTER_HOST,
     CONF_ROUTER_PASSWORD,
@@ -234,8 +235,11 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return WiFiSenseOptionsFlow()
 
 
+from homeassistant.helpers import selector
+
+
 class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
-    """Options flow for adjusting polling, thresholds, AP area mapping, and vacuum room alignment."""
+    """Options flow for adjusting polling, thresholds, AP area mapping, vacuum alignment, and troubleshooting."""
 
     def __init__(self) -> None:
         self._options: dict[str, Any] = {}
@@ -246,7 +250,13 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         """Main options menu."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["general", "ap_mapping", "vacuum_mapping"],
+            menu_options=[
+                "general",
+                "person_tracking",
+                "ap_mapping",
+                "vacuum_mapping",
+                "troubleshooting",
+            ],
         )
 
     async def async_step_general(
@@ -260,7 +270,6 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
 
         # Build vacuum entity list for selector
         vacuum_entities = self._discover_vacuum_entity_ids()
-        vacuum_options = {eid: eid for eid in vacuum_entities}
 
         schema = vol.Schema(
             {
@@ -285,10 +294,92 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_VACUUM_ENTITIES,
                     default=current.get(CONF_VACUUM_ENTITIES, []),
-                ): vol.All(list, [vol.In(vacuum_options)] if vacuum_options else [str]),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(value=eid, label=eid)
+                            for eid in vacuum_entities
+                        ],
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+                if vacuum_entities
+                else selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[],
+                        multiple=True,
+                        custom_value=True,
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="general", data_schema=schema)
+
+    async def async_step_person_tracking(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Map WiFi client devices / wearables to Home Assistant Person entities."""
+        current = dict(self.config_entry.options)
+        current_person_tags: dict[str, Any] = dict(current.get(CONF_PERSON_TAGS, {}))
+
+        # Discover all HA person entities
+        person_entities = self.hass.states.async_entity_ids("person")
+        person_options = {"": "None (Not Tracked as Person)"}
+        for pe in person_entities:
+            state = self.hass.states.get(pe)
+            name = state.name if state and state.name else pe
+            person_options[pe] = f"{name} ({pe})"
+
+        clients = self._get_known_clients()
+
+        if user_input is not None:
+            updated_tags = dict(current_person_tags)
+            for mac in clients:
+                field_key = f"person_{mac.replace(':', '_')}"
+                if field_key in user_input:
+                    val = user_input[field_key]
+                    if val:
+                        # Extract friendly name
+                        person_name = person_options.get(val, val).split(" (")[0]
+                        updated_tags[mac] = {
+                            "person_entity_id": val,
+                            "person_name": person_name,
+                        }
+                    elif mac in updated_tags:
+                        updated_tags.pop(mac)
+            current[CONF_PERSON_TAGS] = updated_tags
+            return self.async_create_entry(title="", data=current)
+
+        schema_dict: dict[Any, Any] = {}
+        for mac in clients:
+            field_key = f"person_{mac.replace(':', '_')}"
+            existing = current_person_tags.get(mac, {})
+            existing_person = (
+                existing
+                if isinstance(existing, str)
+                else existing.get("person_entity_id", "")
+            )
+            schema_dict[vol.Optional(field_key, default=existing_person)] = vol.In(
+                person_options
+            )
+
+        if not schema_dict:
+            schema_dict[vol.Optional("info_no_clients", default="No WiFi clients detected yet")] = str
+
+        client_legend = "\n".join(
+            f"• `{mac.replace(':', '_')}` ➔ **{label}**"
+            for mac, label in clients.items()
+        ) or "None detected"
+
+        return self.async_show_form(
+            step_id="person_tracking",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={
+                "client_count": str(len(clients)),
+                "client_legend": client_legend,
+            },
+        )
 
     async def async_step_ap_mapping(
         self, user_input: dict[str, Any] | None = None
@@ -332,10 +423,18 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             # No APs detected yet
             schema_dict[vol.Optional("info_no_aps", default="No APs detected yet")] = str
 
+        ap_legend = "\n".join(
+            f"• `{mac.replace(':', '_')}` ➔ **{label}**"
+            for mac, label in ap_list.items()
+        ) or "None detected"
+
         return self.async_show_form(
             step_id="ap_mapping",
             data_schema=vol.Schema(schema_dict),
-            description_placeholders={"ap_count": str(len(ap_list))},
+            description_placeholders={
+                "ap_count": str(len(ap_list)),
+                "ap_legend": ap_legend,
+            },
         )
 
     async def async_step_vacuum_mapping(
@@ -383,10 +482,82 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional("info_no_vac", default="No vacuum room segments detected")
             ] = str
 
+        seg_legend = "\n".join(
+            f"• `vac_seg_{seg_id}` ➔ **{label}**"
+            for seg_id, label in segments.items()
+        ) or "None detected"
+
         return self.async_show_form(
             step_id="vacuum_mapping",
             data_schema=vol.Schema(schema_dict),
-            description_placeholders={"segment_count": str(len(segments))},
+            description_placeholders={
+                "segment_count": str(len(segments)),
+                "seg_legend": seg_legend,
+            },
+        )
+
+    async def async_step_troubleshooting(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Troubleshooting: Pillow status, system health, and recent WiFiSense logs."""
+        if user_input is not None:
+            return self.async_show_menu(
+                step_id="init",
+                menu_options=["general", "ap_mapping", "vacuum_mapping", "troubleshooting"],
+            )
+
+        pillow_installed = False
+        pillow_version = ""
+        try:
+            import PIL  # type: ignore[import]
+
+            pillow_installed = True
+            pillow_version = getattr(PIL, "__version__", "Unknown")
+        except ImportError:
+            pillow_installed = False
+
+        pillow_status = (
+            f"✅ Installed (v{pillow_version})"
+            if pillow_installed
+            else "❌ Not Installed (Using pure-Python BMP/PNG fallback. Install via: pip install Pillow)"
+        )
+
+        entry_data = self.hass.data.get(DOMAIN, {}).get(
+            self.config_entry.entry_id, {}
+        )
+        coordinator = entry_data.get("coordinator")
+        recent_logs = (
+            coordinator.get_recent_logs(max_lines=20) if coordinator else []
+        )
+        log_text = (
+            "\n".join(recent_logs) if recent_logs else "No logs recorded yet."
+        )
+
+        router_connected = (
+            coordinator.router_client.is_connected
+            if coordinator and coordinator.router_client
+            else False
+        )
+        router_status = (
+            "✅ Connected" if router_connected else "⚠️ Disconnected / Not Polled"
+        )
+
+        coverage = coordinator.get_area_coverage_summary() if coordinator else {}
+        cov_info = (
+            f"{coverage.get('covered_count', 0)}/{coverage.get('total_areas', 0)} Areas Covered ({coverage.get('cross_covered_count', 0)} Cross-covered)"
+            if coverage
+            else "N/A"
+        )
+
+        return self.async_show_form(
+            step_id="troubleshooting",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "pillow_status": pillow_status,
+                "router_status": router_status,
+                "coverage_info": cov_info,
+                "recent_logs": log_text,
+            },
         )
 
     def _get_known_aps(self) -> dict[str, str]:
@@ -401,7 +572,8 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             coordinator = entry_data.get("coordinator")
             if coordinator and coordinator.ap_stats:
                 for mac, ap in coordinator.ap_stats.items():
-                    aps[mac] = f"{ap.name or 'Deco Node'} ({mac})"
+                    name_part = ap.name or "Deco Node"
+                    aps[mac] = f"{name_part} ({mac})"
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Could not read AP stats: %s", exc)
         return aps
@@ -417,7 +589,9 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             sources = discover_vacuum_maps(self.hass)
             for src in sources:
                 for seg in src.room_segments:
-                    segments[str(seg.segment_id)] = seg.name or f"Room {seg.segment_id}"
+                    segments[str(seg.segment_id)] = (
+                        seg.name or f"Room {seg.segment_id}"
+                    )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Could not read vacuum segments: %s", exc)
         return segments
@@ -431,4 +605,25 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             return [s.entity_id for s in sources]
         except Exception:  # noqa: BLE001
             return []
+
+    def _get_known_clients(self) -> dict[str, str]:
+        """Return dict of client_mac -> display name / hostname."""
+        clients: dict[str, str] = {}
+        person_tags = self.config_entry.options.get(CONF_PERSON_TAGS, {})
+        for mac, data in person_tags.items():
+            name = data.get("person_name") if isinstance(data, dict) else str(data)
+            clients[mac] = name or f"Tag ({mac})"
+        try:
+            entry_data = self.hass.data.get(DOMAIN, {}).get(
+                self.config_entry.entry_id, {}
+            )
+            coordinator = entry_data.get("coordinator")
+            if coordinator and coordinator.router_clients:
+                for mac, client in coordinator.router_clients.items():
+                    name_part = client.hostname or client.ip or "Client"
+                    clients[mac] = f"{name_part} ({mac})"
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Could not read client list: %s", exc)
+        return clients
+
 

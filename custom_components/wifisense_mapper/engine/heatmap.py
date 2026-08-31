@@ -319,7 +319,20 @@ class HeatmapRenderer:
         vmax: float | None = None,
         colormap_name: str = DEFAULT_COLORMAP,
     ) -> bytes:
-        """Internal render pipeline: IDW → normalize → colormap → PNG/BMP."""
+        """Internal render pipeline: IDW → normalize → colormap → PNG."""
+        has_known = any(
+            matrix[r][c] is not None for r in range(rows) for c in range(cols)
+        )
+        if not has_known:
+            # Neutral dark gray placeholder for unpopulated grids
+            neutral_color = (24, 26, 32)
+            pixel_data = [[neutral_color for _ in range(cols)] for _ in range(rows)]
+            if self.pillow_available:
+                return _render_png_pillow(pixel_data, rows, cols, scale=self.cell_scale)
+            return _render_png_pure_python(
+                pixel_data, rows, cols, scale=self.cell_scale
+            )
+
         interpolated = _interpolate_idw(matrix, rows, cols)
         normalized = _normalize(interpolated, rows, cols, vmin=vmin, vmax=vmax)
         cmap = COLORMAPS[
@@ -334,3 +347,4 @@ class HeatmapRenderer:
         if self.pillow_available:
             return _render_png_pillow(pixel_data, rows, cols, scale=self.cell_scale)
         return _render_png_pure_python(pixel_data, rows, cols, scale=self.cell_scale)
+

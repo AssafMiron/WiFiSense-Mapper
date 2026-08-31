@@ -32,12 +32,18 @@
     "step": {
       "init": {
         "title": "WiFiSense Mapper Configuration",
-        "description": "Select an area to configure sensing parameters, Deco/AP node placement, or vacuum room alignment.",
+        "description": "Select an area to configure sensing parameters, Deco/AP node placement, vacuum room alignment, or inspect logs and system health.",
         "menu_options": {
           "general": "General & Sensing Settings",
+          "person_tracking": "Person Tag Mapping & Wearables",
           "ap_mapping": "Access Points & Deco Hub Placements",
-          "vacuum_mapping": "Vacuum Room Alignment (Roborock / Valetudo)"
+          "vacuum_mapping": "Vacuum Room Alignment (Roborock / Valetudo)",
+          "troubleshooting": "Diagnostics & System Health (Logs, Pillow)"
         }
+      },
+      "person_tracking": {
+        "title": "Person Tag & Wearable Mapping",
+        "description": "Assign discovered WiFi devices (smartwatches, phones, or ESP32 tags) to Home Assistant Person entities for real-time indoor room localization, micro-zones, and activity tracking.\n\nDiscovered Devices:\n{client_legend}"
       },
       "general": {
         "title": "General Settings",
@@ -57,11 +63,15 @@
       },
       "ap_mapping": {
         "title": "Access Point & Deco Hub Placements",
-        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node will contribute to presence and distance analysis in that room."
+        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node contribute to presence and room localization.\n\nDiscovered Hubs:\n{ap_legend}"
       },
       "vacuum_mapping": {
         "title": "Vacuum Room Alignment",
-        "description": "Match detected vacuum map room segments (e.g. Roborock rooms) to Home Assistant Areas to align physical boundaries with WiFi telemetry."
+        "description": "Match detected vacuum map room segments (e.g. Roborock rooms) to Home Assistant Areas to align physical boundaries with WiFi telemetry.\n\nDiscovered Room Segments:\n{seg_legend}"
+      },
+      "troubleshooting": {
+        "title": "Diagnostics & System Health",
+        "description": "System Status:\n\n• **Pillow (Image Rendering)**: {pillow_status}\n• **Router Client**: {router_status}\n• **Mesh Coverage**: {coverage_info}\n\n### Recent WiFiSense Logs:\n```\n{recent_logs}\n```\n\n*(Click Submit to return to the Options Menu)*"
       }
     }
   },
@@ -78,6 +88,21 @@
       },
       "anomaly_score": {
         "name": "Anomaly Score"
+      },
+      "mesh_coverage": {
+        "name": "WiFi Mesh Coverage Status"
+      },
+      "area_coverage": {
+        "name": "Area WiFi Coverage"
+      },
+      "person_location": {
+        "name": "Person Location"
+      },
+      "person_activity": {
+        "name": "Person Activity"
+      },
+      "person_coordinates": {
+        "name": "Person Coordinates"
       }
     },
     "binary_sensor": {

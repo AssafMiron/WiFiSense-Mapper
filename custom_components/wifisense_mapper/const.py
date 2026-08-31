@@ -6,7 +6,7 @@ from typing import Final
 
 # Integration domain & version
 DOMAIN: Final = "wifisense_mapper"
-VERSION: Final = "0.1.1"
+VERSION: Final = "0.2.0"
 
 # Platforms to set up
 PLATFORMS: Final = [
@@ -33,11 +33,22 @@ CONF_VACUUM_ENTITIES: Final = "vacuum_entities"  # list[str] entity ids
 # Floor/Area links: dict[node_unique_id → area_id]
 CONF_NODE_AREA_LINKS: Final = "node_area_links"
 
+# Person tracking & micro-zone configs
+CONF_PERSON_TAGS: Final = "person_tags"  # dict[mac -> dict[person_entity_id, custom_name]]
+CONF_MICRO_ZONES: Final = "micro_zones"  # list[dict[name, area_id, floor_id, x_m, y_m, radius_m]]
+
 # Options
 CONF_POLL_INTERVAL: Final = "poll_interval"
 CONF_HEATMAP_ENABLED: Final = "heatmap_enabled"
 CONF_ANOMALY_THRESHOLD: Final = "anomaly_threshold"
 CONF_BASELINE_DAYS: Final = "baseline_days"
+
+# ─── Activity states ──────────────────────────────────────────────────────────
+
+STATE_STATIONARY: Final = "Stationary / Sitting"
+STATE_WALKING: Final = "Walking / Moving"
+STATE_TRANSITIONING: Final = "Room Transitioning"
+STATE_AWAY: Final = "Away"
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 
@@ -81,7 +92,14 @@ VACUUM_PLATFORMS: Final = [
     "roborock",
     "mqtt_vacuum_camera",
     "valetudo",
+    "valetudo_vacuum_camera",
     "dreame",
+    "dreame_vacuum",
+    "xiaomi_miio",
+    "roomba",
+    "ecovacs",
+    "neato",
+    "vacuum",
 ]
 
 # ─── Storage keys ─────────────────────────────────────────────────────────────

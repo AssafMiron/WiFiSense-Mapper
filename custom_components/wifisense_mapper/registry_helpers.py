@@ -125,24 +125,28 @@ def auto_link_ap_to_ha_device(
     from homeassistant.helpers import device_registry as dr
 
     dev_reg = dr.async_get(hass)
-    norm_mac = ap_mac.lower().replace("-", ":").replace(".", ":")
+    norm_mac = str(ap_mac).lower().replace("-", ":").replace(".", ":")
 
     # 1. Search HA Device Registry by MAC address in connections or identifiers
     matched_device = None
     for device in dev_reg.devices.values():
         # Check connections
-        for conn_type, conn_val in device.connections:
-            if conn_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
-                matched_device = device
-                break
+        for conn in device.connections:
+            if len(conn) >= 2:
+                conn_val = str(conn[1])
+                if conn_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
+                    matched_device = device
+                    break
         if matched_device:
             break
 
         # Check identifiers
-        for _, ident_val in device.identifiers:
-            if ident_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
-                matched_device = device
-                break
+        for ident in device.identifiers:
+            if len(ident) >= 2:
+                ident_val = str(ident[1])
+                if ident_val.lower().replace("-", ":").replace(".", ":") == norm_mac:
+                    matched_device = device
+                    break
         if matched_device:
             break
 
@@ -177,4 +181,32 @@ def auto_link_ap_to_ha_device(
             return (suggested_area.id, floor_id)
 
     return (None, None)
+
+
+def get_area_name_from_id(hass: HomeAssistant, area_id: str | None) -> str:
+    """Return the friendly name for an area ID or fallback."""
+    if not area_id:
+        return "Home"
+    try:
+        from homeassistant.helpers import area_registry as ar
+
+        reg = ar.async_get(hass)
+        area = reg.async_get_area(area_id)
+        return area.name if area and area.name else area_id
+    except Exception:  # noqa: BLE001
+        return area_id
+
+
+def get_floor_name_from_id(hass: HomeAssistant, floor_id: str | None) -> str:
+    """Return the friendly name for a floor ID or fallback."""
+    if not floor_id or floor_id == "default":
+        return "Ground Floor"
+    try:
+        from homeassistant.helpers import floor_registry as fr
+
+        reg = fr.async_get(hass)
+        floor = reg.async_get_floor(floor_id)
+        return floor.name if floor and floor.name else floor_id
+    except Exception:  # noqa: BLE001
+        return floor_id
 
