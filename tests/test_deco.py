@@ -280,3 +280,104 @@ async def test_deco_async_methods() -> None:
     await client.async_disconnect()
     assert client.is_connected is False
     assert client._client is None
+
+
+def test_deco_direct_client_list_request_with_rssi_and_base64_nickname() -> None:
+    """Test direct per-node client querying, signal_level RSSI, and base64 nickname decoding (Issue #6)."""
+    import base64
+
+    client = DecoClient("192.168.0.1", "admin", "secret_pass")
+    client._client = MagicMock()
+
+    # Base64 encoded names: "Kitchen Deco" -> "S2l0Y2hlbiBEZWNv", "iPhone-Alice" -> "aVBob25lLUFsaWNl"
+    b64_node_name = base64.b64encode(b"Kitchen Deco").decode()
+    b64_client_name = base64.b64encode(b"iPhone-Alice").decode()
+
+    def fake_request(path: str, data: str, ignore_errors: bool = False):
+        if "device_list" in path:
+            return {
+                "device_list": [
+                    {
+                        "mac": "B0-A7-B9-BB-2F-AC",
+                        "nickname": b64_node_name,
+                        "device_model": "Deco X60",
+                        "role": "master",
+                        "device_ip": "192.168.68.1",
+                    }
+                ]
+            }
+        elif "client_list" in path:
+            return {
+                "client_list": [
+                    {
+                        "mac": "AA-BB-CC-11-22-33",
+                        "ip": "192.168.68.105",
+                        "name": b64_client_name,
+                        "online": True,
+                        "signal_level": {"band5": -48, "band2_4": -65},
+                        "frequency": "band5",
+                        "wire_type": "wireless",
+                    }
+                ]
+            }
+        return {}
+
+    client._client.request.side_effect = fake_request
+
+    clients = client._get_clients_sync()
+    assert len(clients) == 1
+    c = clients[0]
+    assert c.mac == "aa:bb:cc:11:22:33"
+    assert c.ip == "192.168.68.105"
+    assert c.hostname == "iPhone-Alice"
+    assert c.rssi == -48
+    assert c.ap_mac == "b0:a7:b9:bb:2f:ac"
+    assert c.band == "5GHz"
+
+    ap_stats = client._get_ap_stats_sync()
+    assert len(ap_stats) == 1
+    assert ap_stats[0].name == "Kitchen Deco"
+    assert ap_stats[0].mac == "b0:a7:b9:bb:2f:ac"
+    assert ap_stats[0].client_count == 1
+
+
+def test_deco_resilient_fallback_on_wlan_error() -> None:
+    """Test Deco client successfully retrieves clients when get_status fails on admin/wireless?form=wlan."""
+    client = DecoClient("192.168.0.1", "admin", "secret_pass")
+    client._client = MagicMock()
+
+    # get_status fails like in user log
+    client._client.get_status.side_effect = Exception(
+        "TplinkRouter - TPLinkDecoClient - Response with error; Request admin/wireless?form=wlan - Response {}"
+    )
+
+    def fake_request(path: str, data: str, ignore_errors: bool = False):
+        if "device_list" in path:
+            return {
+                "device_list": [
+                    {"mac": "11-22-33-44-55-66", "custom_nickname": "Office Deco", "device_model": "X60"}
+                ]
+            }
+        elif "client_list" in path:
+            return {
+                "client_list": [
+                    {
+                        "mac": "AA-BB-CC-44-55-66",
+                        "ip": "192.168.68.120",
+                        "hostname": "SmartWatch",
+                        "online": True,
+                        "signal": -62,
+                    }
+                ]
+            }
+        return {}
+
+    client._client.request.side_effect = fake_request
+
+    clients = client._get_clients_sync()
+    assert len(clients) == 1
+    assert clients[0].mac == "aa:bb:cc:44:55:66"
+    assert clients[0].hostname == "SmartWatch"
+    assert clients[0].rssi == -62
+    assert clients[0].ap_mac == "11:22:33:44:55:66"
+
