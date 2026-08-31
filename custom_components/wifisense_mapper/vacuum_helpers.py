@@ -73,103 +73,192 @@ class VacuumMapSource:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-def discover_vacuum_maps(hass: HomeAssistant) -> list[VacuumMapSource]:
-    """Scan entity registry for vacuum map image/camera entities.
+def discover_vacuum_maps(
+    hass: HomeAssistant, additional_entity_ids: list[str] | None = None
+) -> list[VacuumMapSource]:
+    """Scan entity registry and state machine for vacuum entities and map images.
 
-    Returns one VacuumMapSource per discovered map entity.
-    Room segments are read from entity state attributes where available.
+    Returns VacuumMapSource objects with discovered room segments.
     """
     from homeassistant.helpers import entity_registry as er
 
     ent_reg = er.async_get(hass)
     found: list[VacuumMapSource] = []
+    seen_entities: set[str] = set()
 
+    # 1. Registry scan
     for entry in ent_reg.entities.values():
-        if entry.domain not in ("image", "camera"):
+        if entry.domain not in ("vacuum", "image", "camera"):
             continue
 
+        is_vac_domain = entry.domain == "vacuum"
         is_vac_platform = entry.platform in VACUUM_PLATFORMS
         name_lower = (entry.name or entry.original_name or entry.entity_id).lower()
         uid_lower = (entry.unique_id or "").lower()
         is_map_entity = "map" in name_lower or "map" in uid_lower or "floor" in name_lower
 
-        if not is_vac_platform and not is_map_entity:
+        if not is_vac_domain and not is_vac_platform and not is_map_entity:
             continue
 
         state = hass.states.get(entry.entity_id)
         attrs = state.attributes if state else {}
 
-        # Extract room segments from state attributes (Roborock / Valetudo style)
         segments = _extract_segments(attrs)
 
-        # Fallback: check related vacuum entities on the same device
+        # Fallback: check related vacuum/image entities on the same device
         if not segments and entry.device_id:
             for other_entry in ent_reg.entities.values():
                 if (
                     other_entry.device_id == entry.device_id
-                    and other_entry.domain == "vacuum"
+                    and other_entry.entity_id != entry.entity_id
                 ):
-                    vac_state = hass.states.get(other_entry.entity_id)
-                    if vac_state:
-                        segments = _extract_segments(vac_state.attributes)
+                    other_state = hass.states.get(other_entry.entity_id)
+                    if other_state:
+                        segments = _extract_segments(other_state.attributes)
                         if segments:
                             break
 
-        source = VacuumMapSource(
-            entity_id=entry.entity_id,
-            platform=entry.platform,
-            map_name=attrs.get("map_name")
-            or attrs.get("friendly_name")
-            or entry.name
-            or entry.entity_id,
-            room_segments=segments,
-            extra={
-                "device_id": entry.device_id,
-                "area_id": entry.area_id,
-            },
-        )
-        found.append(source)
-        _LOGGER.debug(
-            "Vacuum map entity discovered: %s (platform=%s, segments=%d)",
-            entry.entity_id,
-            entry.platform,
-            len(segments),
+        seen_entities.add(entry.entity_id)
+        found.append(
+            VacuumMapSource(
+                entity_id=entry.entity_id,
+                platform=entry.platform,
+                map_name=attrs.get("map_name")
+                or attrs.get("friendly_name")
+                or entry.name
+                or entry.original_name
+                or entry.entity_id,
+                room_segments=segments,
+                extra={
+                    "device_id": entry.device_id,
+                    "area_id": entry.area_id,
+                },
+            )
         )
 
-    _LOGGER.info("Vacuum map discovery complete: found %d map entity/ies", len(found))
+    # 2. Check all states in vacuum domain directly in case some aren't in entity registry
+    for eid in hass.states.async_entity_ids("vacuum"):
+        if eid in seen_entities:
+            continue
+        state = hass.states.get(eid)
+        if not state:
+            continue
+        segments = _extract_segments(state.attributes)
+        seen_entities.add(eid)
+        found.append(
+            VacuumMapSource(
+                entity_id=eid,
+                platform="vacuum",
+                map_name=state.attributes.get("friendly_name") or eid,
+                room_segments=segments,
+                extra={},
+            )
+        )
+
+    # 3. Check explicitly configured vacuum entities
+    if additional_entity_ids:
+        for eid in additional_entity_ids:
+            if eid in seen_entities:
+                continue
+            state = hass.states.get(eid)
+            if not state:
+                continue
+            segments = _extract_segments(state.attributes)
+            seen_entities.add(eid)
+            found.append(
+                VacuumMapSource(
+                    entity_id=eid,
+                    platform=eid.split(".")[0],
+                    map_name=state.attributes.get("friendly_name") or eid,
+                    room_segments=segments,
+                    extra={},
+                )
+            )
+
+    _LOGGER.info("Vacuum map discovery complete: found %d vacuum/map entity/ies", len(found))
     return found
 
 
 def _extract_segments(attrs: dict[str, Any]) -> list[VacuumRoomSegment]:
     """Parse room segments from state attributes.
 
-    Supports the Roborock/Valetudo attribute formats:
-      - ``rooms``: list of dicts with id + name
-      - ``segments``: dict mapping segment_id → name
-      - ``room_list``: list of {id, name} dicts
+    Supports diverse robot vacuum attribute schemas:
+      - ``rooms`` / ``room_list`` / ``rooms_list``: list of dicts with id + name
+      - ``segments`` / ``segment_list``: dict or list mapping segment_id → name
+      - ``room_mapping`` / ``map_rooms`` / ``custom_rooms`` / ``room_names``
     """
+    import json
+
     segments: list[VacuumRoomSegment] = []
+    seen_ids: set[str] = set()
 
-    # Roborock core integration: attrs['rooms'] = [{id, name, ...}]
-    rooms_raw = attrs.get("rooms") or attrs.get("room_list", [])
-    if isinstance(rooms_raw, list):
-        for room in rooms_raw:
-            if isinstance(room, dict):
-                seg_id = room.get("id") or room.get("segment_id") or room.get("room_id")
-                seg_name = room.get("name") or room.get("room_name")
-                if seg_id is not None:
-                    segments.append(VacuumRoomSegment(segment_id=seg_id, name=seg_name))
+    def _add_segment(seg_id: Any, seg_name: Any = None) -> None:
+        if seg_id is None:
+            return
+        s_id = str(seg_id).strip()
+        if not s_id or s_id in seen_ids:
+            return
+        seen_ids.add(s_id)
+        name_str = str(seg_name).strip() if seg_name else f"Room {s_id}"
+        segments.append(VacuumRoomSegment(segment_id=s_id, name=name_str))
 
-    # Valetudo / mqtt_vacuum_camera: attrs['segments'] = {"1": "Kitchen", ...}
-    segs_raw = attrs.get("segments")
-    if isinstance(segs_raw, dict):
-        for seg_id, seg_name in segs_raw.items():
-            segments.append(
-                VacuumRoomSegment(
-                    segment_id=seg_id,
-                    name=seg_name if isinstance(seg_name, str) else str(seg_name),
-                )
-            )
+    # Look through all potential room attribute keys
+    for key in (
+        "rooms",
+        "room_list",
+        "rooms_list",
+        "segments",
+        "segment_list",
+        "room_mapping",
+        "map_rooms",
+        "custom_rooms",
+        "room_names",
+        "selected_rooms",
+        "cleaned_rooms",
+    ):
+        val = attrs.get(key)
+        if not val:
+            continue
+
+        if isinstance(val, str):
+            try:
+                val = json.loads(val)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+
+        # List of room dictionaries: [{"id": 16, "name": "Kitchen"}, ...]
+        if isinstance(val, list):
+            for idx, item in enumerate(val):
+                if isinstance(item, dict):
+                    sid = (
+                        item.get("id")
+                        or item.get("segment_id")
+                        or item.get("room_id")
+                        or item.get("key")
+                    )
+                    sname = (
+                        item.get("name")
+                        or item.get("room_name")
+                        or item.get("label")
+                        or item.get("room")
+                    )
+                    _add_segment(sid, sname)
+                elif isinstance(item, (str, int)):
+                    _add_segment(str(item), str(item))
+
+        # Dictionary of room id -> name or name -> id: {"16": "Kitchen", ...}
+        elif isinstance(val, dict):
+            for k, v in val.items():
+                if isinstance(v, dict):
+                    sid = v.get("id") or v.get("segment_id") or k
+                    sname = v.get("name") or v.get("room_name") or str(k)
+                    _add_segment(sid, sname)
+                elif isinstance(v, (str, int)):
+                    # Check if key is numeric ID (standard) or name
+                    if str(k).isdigit() or len(str(k)) <= 4:
+                        _add_segment(k, str(v))
+                    else:
+                        _add_segment(str(v), str(k))
 
     return segments
 
