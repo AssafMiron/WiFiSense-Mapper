@@ -567,6 +567,8 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
 
         devices = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
         for device in devices:
+            if isinstance(device, str):
+                continue
             dev_name = device.name_by_user or device.name or device.model
             if not dev_name:
                 continue
@@ -688,6 +690,8 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         dev_reg = dr.async_get(self.hass)
         dev_list = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
         for device in dev_list:
+            if isinstance(device, str):
+                continue
             dev_name = device.name_by_user or device.name or device.model
             if not dev_name:
                 continue
