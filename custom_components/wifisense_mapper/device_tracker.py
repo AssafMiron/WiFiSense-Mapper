@@ -98,30 +98,52 @@ async def async_setup_entry(
         return
 
 
-    # Create trackers for clients already known at setup time
+    # Create trackers for clients: first all explicitly tracked MACs (including person tags)
     entities: list[TrackerEntity] = []
-    seen_macs = set()
+    seen_macs: set[str] = set()
 
-    for mac, client in list(coordinator.router_clients.items())[:MAX_TRACKED_DEVICES]:
+    for mac in tracked_macs:
         if mac in seen_macs:
             continue
-        if not track_all and mac not in tracked_macs:
-            continue
         seen_macs.add(mac)
+        client = coordinator.router_clients.get(mac)
+        tag_data = person_tags.get(mac)
+        person_name = (
+            tag_data.get("person_name")
+            if isinstance(tag_data, dict)
+            else str(tag_data)
+            if isinstance(tag_data, str)
+            else None
+        )
+        display_name = (
+            person_name
+            or (client.hostname if client else None)
+            or f"Device {mac}"
+        )
         device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry.entry_id}_tracker_{mac}")},
-            name=client.hostname or f"Device {mac}",
+            name=display_name,
             manufacturer=MANUFACTURER,
-            model="WiFi Client",
+            model="WiFi Client / Person Tracker",
         )
         entities.append(WifiSenseDeviceTracker(coordinator, entry, mac, device_info))
 
+    # If track_all is True, add any remaining discovered router clients
+    if track_all:
+        for mac, client in list(coordinator.router_clients.items())[:MAX_TRACKED_DEVICES]:
+            if mac in seen_macs:
+                continue
+            seen_macs.add(mac)
+            device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"{entry.entry_id}_tracker_{mac}")},
+                name=client.hostname or f"Device {mac}",
+                manufacturer=MANUFACTURER,
+                model="WiFi Client",
+            )
+            entities.append(WifiSenseDeviceTracker(coordinator, entry, mac, device_info))
+
     if entities:
         async_add_entities(entities)
-
-    # TODO: In a future version, register a coordinator listener to
-    # dynamically add trackers for newly-seen clients via
-    # async_add_entities(new_entities, update_before_add=True)
 
 
 class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEntity):
