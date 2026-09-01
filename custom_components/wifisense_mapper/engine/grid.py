@@ -143,6 +143,46 @@ class SpatialGrid:
         # CSI node positions (device_id → (col, row))
         self._csi_positions: dict[str, tuple[int, int]] = {}
 
+        # Room label positions: area_id → dict(name, x_m, y_m, segment_id)
+        self.room_labels: dict[str, dict[str, Any]] = {}
+
+        # AP metadata markers: ap_mac → dict(name, x_m, y_m, area_id)
+        self.ap_markers: dict[str, dict[str, Any]] = {}
+
+    def set_room_label(
+        self,
+        area_id: str,
+        name: str,
+        x_m: float,
+        y_m: float,
+        segment_id: str | None = None,
+    ) -> None:
+        """Register or update a room label position on the floor map."""
+        self.room_labels[area_id] = {
+            "name": name,
+            "x_m": float(x_m),
+            "y_m": float(y_m),
+            "segment_id": str(segment_id) if segment_id is not None else None,
+        }
+
+    def set_ap_marker(
+        self,
+        ap_mac: str,
+        name: str,
+        x_m: float,
+        y_m: float,
+        area_id: str | None = None,
+    ) -> None:
+        """Register or update an AP marker position with real coordinates."""
+        norm_mac = ap_mac.lower()
+        self.set_ap_position(norm_mac, x_m, y_m)
+        self.ap_markers[norm_mac] = {
+            "name": name,
+            "x_m": float(x_m),
+            "y_m": float(y_m),
+            "area_id": area_id,
+        }
+
     def set_ap_position(self, ap_mac: str, x_m: float, y_m: float) -> None:
         """Register the physical position of an AP/mesh node."""
         col = min(int(x_m / self.resolution_m), self.cols - 1)
@@ -155,6 +195,35 @@ class SpatialGrid:
         if pos is None:
             return None
         return (pos[0] * self.resolution_m, pos[1] * self.resolution_m)
+
+    def compute_multi_ap_coverage(
+        self, ap_coverage_radius_m: float = 6.0
+    ) -> list[list[float | None]]:
+        """Compute multi-AP coverage matrix for the floor.
+
+        Returns 2D matrix of values:
+          - 0.0: Dead zone / unmonitored
+          - 1.0: Covered by 1 AP
+          - 2.0: Multi-AP cross-covered (overlap zone)
+        """
+        matrix: list[list[float | None]] = [
+            [0.0] * self.cols for _ in range(self.rows)
+        ]
+        if not self._ap_positions:
+            return matrix
+
+        radius_cells = max(1.0, ap_coverage_radius_m / self.resolution_m)
+
+        for r in range(self.rows):
+            for c in range(self.cols):
+                ap_count = 0
+                for ac, ar in self._ap_positions.values():
+                    dist = math.sqrt((c - ac) ** 2 + (r - ar) ** 2)
+                    if dist <= radius_cells:
+                        ap_count += 1
+                matrix[r][c] = 2.0 if ap_count >= 2 else (1.0 if ap_count == 1 else 0.0)
+
+        return matrix
 
     def set_csi_position(self, device_id: str, x_m: float, y_m: float) -> None:
         """Register the physical position of a CSI sensor node."""
@@ -292,6 +361,8 @@ class SpatialGrid:
             "resolution_m": self.resolution_m,
             "ap_positions": {k: list(v) for k, v in self._ap_positions.items()},
             "csi_positions": {k: list(v) for k, v in self._csi_positions.items()},
+            "room_labels": self.room_labels,
+            "ap_markers": self.ap_markers,
             "cells": [cell.to_dict() for cell in self._cells.values()],
         }
 
@@ -308,6 +379,8 @@ class SpatialGrid:
             grid._ap_positions[ap_mac] = tuple(pos)  # type: ignore[assignment]
         for dev_id, pos in data.get("csi_positions", {}).items():
             grid._csi_positions[dev_id] = tuple(pos)  # type: ignore[assignment]
+        grid.room_labels = data.get("room_labels", {})
+        grid.ap_markers = data.get("ap_markers", {})
         for cell_data in data.get("cells", []):
             cell = GridCell.from_dict(cell_data)
             grid._cells[(cell.x, cell.y)] = cell

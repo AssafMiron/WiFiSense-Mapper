@@ -63,7 +63,7 @@ async def test_deco_discovery_provider(hass: HomeAssistant) -> None:
         assert router.host == "192.168.1.246"
         assert router.username == "admin"
         assert router.password == "secret_password"
-        assert router.is_bridge_only is False
+        assert router.is_bridge_only is True
 
 
 @pytest.mark.asyncio

@@ -381,3 +381,72 @@ def test_deco_resilient_fallback_on_wlan_error() -> None:
     assert clients[0].rssi == -62
     assert clients[0].ap_mac == "11:22:33:44:55:66"
 
+
+@pytest.mark.asyncio
+async def test_deco_ha_bridge_mode(hass) -> None:
+    """Test Deco HA Bridge mode harvests clients and APs without opening direct web sessions."""
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    deco_entry = MockConfigEntry(domain="tplink_deco", title="TP-Link Deco")
+    deco_entry.add_to_hass(hass)
+
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+
+    # 1. Mock Deco hardware device entry in HA
+    dev_entry = dev_reg.async_get_or_create(
+        config_entry_id=deco_entry.entry_id,
+        identifiers={("tplink_deco", "B0-A7-B9-BB-32-30")},
+        connections={(dr.CONNECTION_NETWORK_MAC, "b0:a7:b9:bb:32:30")},
+        name="Kitchen Deco",
+        model="Deco X60",
+    )
+    dev_reg.async_update_device(dev_entry.id, area_id="kitchen")
+
+    # 2. Mock client device tracker from tplink_deco
+    ent_entry = ent_reg.async_get_or_create(
+        domain="device_tracker",
+        platform="tplink_deco",
+        unique_id="aa:bb:cc:11:22:33",
+        config_entry=deco_entry,
+    )
+    hass.states.async_set(
+        ent_entry.entity_id,
+        "home",
+        {
+            "mac": "AA:BB:CC:11:22:33",
+            "ip_address": "192.168.68.105",
+            "host_name": "Assaf-Phone",
+            "deco_device": "Kitchen Deco",
+            "signal_level": 3,
+            "connection_type": "5GHz",
+            "down_kilobytes_per_s": 1500,
+            "up_kilobytes_per_s": 250,
+        },
+    )
+
+    client = DecoClient(host="", username="", password="", hass=hass)
+    connected = await client.async_connect()
+    assert connected is True
+    assert client.is_bridge_mode is True
+
+    clients = await client.async_get_clients()
+    assert len(clients) == 1
+    c = clients[0]
+    assert c.mac == "aa:bb:cc:11:22:33"
+    assert c.ip == "192.168.68.105"
+    assert c.hostname == "Assaf-Phone"
+    assert c.rssi == -50  # 3 bars -> -50 dBm
+    assert c.ap_mac == "b0:a7:b9:bb:32:30"
+    assert c.band == "5GHz"
+    assert c.extra["via_bridge"] is True
+
+    ap_stats = await client.async_get_ap_stats()
+    assert len(ap_stats) == 1
+    assert ap_stats[0].mac == "b0:a7:b9:bb:32:30"
+    assert ap_stats[0].name == "Kitchen Deco"
+    assert ap_stats[0].area_id == "kitchen"
+    assert ap_stats[0].client_count == 1
+

@@ -6,7 +6,7 @@ from typing import Final
 
 # Integration domain & version
 DOMAIN: Final = "wifisense_mapper"
-VERSION: Final = "0.2.2"
+VERSION: Final = "0.2.3"
 
 # Platforms to set up
 PLATFORMS: Final = [
@@ -116,8 +116,15 @@ LAYER_SIGNAL: Final = "signal"
 LAYER_VARIANCE: Final = "variance"
 LAYER_MOTION: Final = "motion"
 LAYER_ANOMALY: Final = "anomaly"
+LAYER_COVERAGE: Final = "coverage"
 
-HEATMAP_LAYERS: Final = [LAYER_SIGNAL, LAYER_VARIANCE, LAYER_MOTION, LAYER_ANOMALY]
+HEATMAP_LAYERS: Final = [
+    LAYER_SIGNAL,
+    LAYER_VARIANCE,
+    LAYER_MOTION,
+    LAYER_ANOMALY,
+    LAYER_COVERAGE,
+]
 
 # ─── Service names ────────────────────────────────────────────────────────────
 

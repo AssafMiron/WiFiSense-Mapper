@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.3] - 2026-09-01
+
+### Added
+- **Deco Home Assistant Entity Bridge Mode**:
+  - Automatically bridges through Home Assistant's `tplink_deco` device trackers and Device Registry to eliminate single-session admin web lockout and `{}` empty response errors.
+  - Harvests connected clients, signal levels, and Deco node MAC associations without creating conflicting web sessions.
+  - 1-Click zero-credentials setup when Deco is detected in Home Assistant.
+- **Multi-AP Spatial Coverage & Overlays**:
+  - Added `SpatialGrid.compute_multi_ap_coverage` computing dead zones (0.0), single AP coverage (1.0), and cross-covered overlap zones (2.0).
+  - New `LAYER_COVERAGE` heatmap layer exposing `image.wifisense_mapper_<floor>_coverage` image entities for every floor.
+  - Automatic rendering of room labels and Deco AP markers (`📶 Deco Name`) directly on floor heatmaps.
+- **HA Device Registry Area Synchronization**:
+  - Added `async_sync_device_area` to automatically update unassigned Deco devices in Home Assistant's native Device Registry with mapped areas.
+  - Added `overwrite_ha_device_areas` toggle in Options Flow (`ap_mapping`).
+
+### Fixed
+- **Auto-Matcher Room Name Prioritization**:
+  - Resolved latent mismatch bug by prioritizing device names (e.g. "Bedroom Deco" matching "bedroom" area with score $\ge 0.7$) over default parent integration areas (like "office").
+- **Person Localization Standby & Coarse Positioning**:
+  - Prevented person trackers from defaulting to `"Unknown Room"` during initial idle state.
+  - Added coarse AP centering with confidence halo when exact dBm signal is unavailable.
+
+---
+
 ## [0.2.2] - 2026-08-31
 
 ### Fixed

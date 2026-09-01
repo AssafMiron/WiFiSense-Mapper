@@ -22,30 +22,72 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .base import APStats, ClientInfo, RouterClient
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class DecoClient(RouterClient):
-    """TP-Link Deco client using tplinkrouterc6u."""
+    """TP-Link Deco client supporting both HA Bridge mode and direct tplinkrouterc6u API."""
 
-    def __init__(self, host: str, username: str, password: str) -> None:
+    def __init__(
+        self,
+        host: str = "",
+        username: str = "",
+        password: str = "",
+        hass: HomeAssistant | None = None,
+    ) -> None:
         super().__init__(host, username, password)
+        self._hass = hass
+        self._bridge_mode: bool = False
         self._client: Any = None  # tplinkrouterc6u.TPLinkDecoClient
 
-    async def async_connect(self) -> bool:
-        """Authenticate with the Deco router.
+    @property
+    def is_bridge_mode(self) -> bool:
+        """Return True if operating in HA Entity Bridge mode."""
+        return self._bridge_mode
 
-        The tplinkrouterc6u library is synchronous, so we run it in
-        an executor to avoid blocking the HA event loop.
+    async def async_connect(self) -> bool:
+        """Authenticate or activate bridge mode.
+
+        Priority 1: If tplink_deco integration is present in Home Assistant, activate
+        HA Entity Bridge mode to avoid the 1-session admin lockout.
+        Priority 2: Direct authentication via tplinkrouterc6u in an executor.
         """
+        # 1. Check for HA Bridge mode
+        if self._hass is not None:
+            has_deco_entries = any(
+                entry.domain == "tplink_deco"
+                for entry in self._hass.config_entries.async_entries()
+            )
+            has_deco_component = "tplink_deco" in self._hass.config.components
+            if has_deco_entries or has_deco_component:
+                self._bridge_mode = True
+                self._connected = True
+                _LOGGER.info(
+                    "TP-Link Deco HA bridge active — reading from HA entity states "
+                    "(avoids Deco admin session lockouts)."
+                )
+                return True
+
+        # 2. Fallback to direct credentials connection
+        if not self.host or not self.password:
+            _LOGGER.debug(
+                "No direct Deco credentials and no tplink_deco integration found in HA."
+            )
+            self._connected = False
+            return False
+
         try:
             await asyncio.get_event_loop().run_in_executor(None, self._connect_sync)
             self._connected = True
-            _LOGGER.debug("Connected to Deco at %s", self.host)
+            self._bridge_mode = False
+            _LOGGER.debug("Connected directly to Deco at %s", self.host)
             return True
         except ImportError:
             _LOGGER.error(
@@ -54,7 +96,7 @@ class DecoClient(RouterClient):
             )
             return False
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Failed to connect to Deco at %s: %s", self.host, exc)
+            _LOGGER.warning("Failed to connect directly to Deco at %s: %s", self.host, exc)
             self._connected = False
             return False
 
@@ -74,16 +116,20 @@ class DecoClient(RouterClient):
     async def async_get_clients(self) -> list[ClientInfo]:
         """Return connected WiFi clients from the Deco."""
         if (
-            not self._connected or self._client is None
+            not self._connected or (not self._bridge_mode and self._client is None)
         ) and not await self.async_connect():
             return []
+
+        if self._bridge_mode and self._hass is not None:
+            return self._get_clients_from_ha_bridge()
+
         try:
             raw = await asyncio.get_event_loop().run_in_executor(
                 None, self._get_clients_sync
             )
             return raw
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Error fetching Deco clients: %s", exc)
+            _LOGGER.warning("Error fetching Deco clients directly: %s", exc)
             self._connected = False  # Force re-auth on next poll
             return []
 
@@ -373,17 +419,238 @@ class DecoClient(RouterClient):
     async def async_get_ap_stats(self) -> list[APStats]:
         """Return per-Deco-node statistics."""
         if (
-            not self._connected or self._client is None
+            not self._connected or (not self._bridge_mode and self._client is None)
         ) and not await self.async_connect():
             return []
+
+        if self._bridge_mode and self._hass is not None:
+            return self._get_ap_stats_from_ha_bridge()
+
         try:
             return await asyncio.get_event_loop().run_in_executor(
                 None, self._get_ap_stats_sync
             )
 
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Error fetching Deco AP stats: %s", exc)
+            _LOGGER.warning("Error fetching Deco AP stats directly: %s", exc)
             return []
+
+    def _get_ha_deco_node_map(self) -> dict[str, str]:
+        """Map Deco node device names, models, and MACs from HA DeviceRegistry to normalized MACs."""
+        if self._hass is None:
+            return {}
+
+        node_map: dict[str, str] = {}
+        from homeassistant.helpers import device_registry as dr
+
+        dev_reg = dr.async_get(self._hass)
+        devices = (
+            dev_reg.devices.values()
+            if hasattr(dev_reg.devices, "values")
+            else dev_reg.devices
+        )
+
+        for dev in devices:
+            if isinstance(dev, str):
+                continue
+
+            # Check if this device is from tplink_deco
+            is_deco = any(
+                domain == "tplink_deco" or domain == "tplink"
+                for domain, _ in dev.identifiers
+            )
+            if not is_deco and not (dev.manufacturer and "tp-link" in dev.manufacturer.lower()):
+                continue
+
+            # Extract MAC from connections or identifiers
+            dev_mac = ""
+            for conn in dev.connections:
+                if len(conn) >= 2 and (str(conn[1]).count(":") >= 5 or str(conn[1]).count("-") >= 5):
+                    dev_mac = self.normalize_mac(str(conn[1]))
+                    break
+            if not dev_mac:
+                for ident in dev.identifiers:
+                    if len(ident) >= 2 and (str(ident[1]).count(":") >= 5 or str(ident[1]).count("-") >= 5):
+                        dev_mac = self.normalize_mac(str(ident[1]))
+                        break
+
+            if dev_mac:
+                node_map[dev_mac] = dev_mac
+                if dev.name:
+                    node_map[dev.name.lower().strip()] = dev_mac
+                if dev.name_by_user:
+                    node_map[dev.name_by_user.lower().strip()] = dev_mac
+                if dev.model:
+                    node_map[dev.model.lower().strip()] = dev_mac
+
+        return node_map
+
+    def _get_clients_from_ha_bridge(self) -> list[ClientInfo]:
+        """Harvest connected clients directly from Home Assistant's tplink_deco entity states."""
+        if self._hass is None:
+            return []
+
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(self._hass)
+        node_map = self._get_ha_deco_node_map()
+        result: dict[str, ClientInfo] = {}
+
+        for entry in ent_reg.entities.values():
+            if entry.domain != "device_tracker" or entry.platform != "tplink_deco":
+                continue
+
+            state = self._hass.states.get(entry.entity_id)
+            if state is None:
+                continue
+
+            attrs = state.attributes
+            mac_raw = attrs.get("mac") or entry.unique_id or ""
+            if not mac_raw:
+                continue
+
+            norm_mac = self.normalize_mac(str(mac_raw))
+            if not norm_mac:
+                continue
+
+            # Signal & RSSI extraction
+            rssi: int | None = None
+            raw_sig = attrs.get("signal_level") or attrs.get("rssi") or attrs.get("signal")
+            if isinstance(raw_sig, dict):
+                val = raw_sig.get("band5") or raw_sig.get("band2_4") or raw_sig.get("band6")
+                if isinstance(val, (int, float)):
+                    rssi = int(val)
+            elif isinstance(raw_sig, (int, float)):
+                val_int = int(raw_sig)
+                if val_int < 0:
+                    rssi = val_int
+                elif 1 <= val_int <= 3:
+                    # Signal bars conversion: 3 bars -> -50 dBm, 2 bars -> -65 dBm, 1 bar -> -80 dBm
+                    rssi = -50 if val_int == 3 else (-65 if val_int == 2 else -80)
+
+            # Connected Deco AP identification
+            ap_mac: str | None = None
+            connected_ap = (
+                attrs.get("deco_device")
+                or attrs.get("device")
+                or attrs.get("ap_mac")
+                or attrs.get("connected_to")
+                or attrs.get("ap_name")
+            )
+            if connected_ap:
+                ap_str = str(connected_ap).strip()
+                if ap_str.lower() in node_map:
+                    ap_mac = node_map[ap_str.lower()]
+                else:
+                    norm_ap = self.normalize_mac(ap_str)
+                    if norm_ap:
+                        ap_mac = norm_ap
+
+            band = attrs.get("connection_type") or attrs.get("band") or attrs.get("interface")
+            if band:
+                band_str = str(band)
+                if "5" in band_str:
+                    band = "5GHz"
+                elif "2" in band_str:
+                    band = "2.4GHz"
+                elif "6" in band_str:
+                    band = "6GHz"
+
+            result[norm_mac] = ClientInfo(
+                mac=norm_mac,
+                ip=str(attrs.get("ip_address") or attrs.get("ip"))
+                if (attrs.get("ip_address") or attrs.get("ip"))
+                else None,
+                hostname=str(
+                    attrs.get("host_name")
+                    or attrs.get("friendly_name")
+                    or attrs.get("name")
+                    or entry.name
+                    or norm_mac
+                ),
+                rssi=rssi,
+                ap_mac=ap_mac,
+                ssid=str(attrs.get("ssid")) if attrs.get("ssid") else None,
+                band=str(band) if band else None,
+                extra={
+                    "via_deco": True,
+                    "via_bridge": True,
+                    "is_home": state.state == "home",
+                    "entity_id": entry.entity_id,
+                    "down_speed": attrs.get("down_kilobytes_per_s") or attrs.get("down_speed"),
+                    "up_speed": attrs.get("up_kilobytes_per_s") or attrs.get("up_speed"),
+                },
+            )
+
+        _LOGGER.debug("Deco HA bridge harvested %d clients", len(result))
+        return list(result.values())
+
+    def _get_ap_stats_from_ha_bridge(self) -> list[APStats]:
+        """Harvest Deco mesh AP nodes directly from Home Assistant's DeviceRegistry."""
+        if self._hass is None:
+            return []
+
+        from homeassistant.helpers import device_registry as dr
+
+        dev_reg = dr.async_get(self._hass)
+        devices = (
+            dev_reg.devices.values()
+            if hasattr(dev_reg.devices, "values")
+            else dev_reg.devices
+        )
+        clients = self._get_clients_from_ha_bridge()
+
+        client_counts: dict[str, int] = {}
+        for c in clients:
+            if c.ap_mac:
+                client_counts[c.ap_mac] = client_counts.get(c.ap_mac, 0) + 1
+
+        ap_stats_list: list[APStats] = []
+        for dev in devices:
+            if isinstance(dev, str):
+                continue
+
+            is_deco = any(
+                domain == "tplink_deco" or domain == "tplink"
+                for domain, _ in dev.identifiers
+            )
+            if not is_deco and not (dev.manufacturer and "tp-link" in dev.manufacturer.lower()):
+                continue
+
+            dev_mac = ""
+            for conn in dev.connections:
+                if len(conn) >= 2 and (str(conn[1]).count(":") >= 5 or str(conn[1]).count("-") >= 5):
+                    dev_mac = self.normalize_mac(str(conn[1]))
+                    break
+            if not dev_mac:
+                for ident in dev.identifiers:
+                    if len(ident) >= 2 and (str(ident[1]).count(":") >= 5 or str(ident[1]).count("-") >= 5):
+                        dev_mac = self.normalize_mac(str(ident[1]))
+                        break
+
+            if not dev_mac:
+                continue
+
+            count = client_counts.get(dev_mac, 0)
+            ap_stats_list.append(
+                APStats(
+                    mac=dev_mac,
+                    name=dev.name_by_user or dev.name or f"Deco {dev_mac[-5:]}",
+                    area_id=dev.area_id,
+                    client_count=count,
+                    extra={
+                        "via_deco": True,
+                        "via_bridge": True,
+                        "device_id": dev.id,
+                        "model": dev.model,
+                        "sw_version": dev.sw_version,
+                        "hw_version": dev.hw_version,
+                    },
+                )
+            )
+
+        _LOGGER.debug("Deco HA bridge harvested %d AP mesh nodes", len(ap_stats_list))
+        return ap_stats_list
 
     def _get_ap_stats_sync(self) -> list[APStats]:
         """Blocking AP stats fetch — runs in executor."""

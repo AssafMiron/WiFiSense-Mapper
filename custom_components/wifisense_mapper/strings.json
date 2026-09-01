@@ -63,7 +63,10 @@
       },
       "ap_mapping": {
         "title": "Access Point & Deco Hub Placements",
-        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node contribute to presence and room localization."
+        "description": "Assign each detected Deco hub or Access Point to its physical Home Assistant Area. Connected devices in range of this node contribute to presence and room localization.",
+        "data": {
+          "overwrite_ha_device_areas": "Synchronize & overwrite existing Home Assistant Device Registry area assignments"
+        }
       },
       "vacuum_mapping": {
         "title": "Vacuum Room Alignment",

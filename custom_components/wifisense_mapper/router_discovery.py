@@ -156,9 +156,9 @@ class DecoDiscoveryProvider(RouterDiscoveryProvider):
                 password = data.get("password") or data.get("admin_password")
 
                 display_title = (
-                    f"TP-Link Deco ({host})"
+                    f"TP-Link Deco (HA Bridge - {host})"
                     if host
-                    else f"TP-Link Deco ({entry.title})"
+                    else f"TP-Link Deco (HA Bridge - {entry.title})"
                 )
 
                 discovered.append(
@@ -170,11 +170,15 @@ class DecoDiscoveryProvider(RouterDiscoveryProvider):
                         host=host,
                         username=username,
                         password=password,
-                        is_bridge_only=False,
+                        is_bridge_only=True,
                         extra={"raw_title": entry.title},
                     )
                 )
-                _LOGGER.debug("Discovered Deco router at %s (entry_id=%s)", host, entry.entry_id)
+                _LOGGER.debug(
+                    "Discovered Deco HA Bridge router at %s (entry_id=%s)",
+                    host,
+                    entry.entry_id,
+                )
 
         return discovered
 

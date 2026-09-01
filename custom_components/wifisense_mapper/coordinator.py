@@ -38,6 +38,7 @@ from .const import (
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
     LAYER_ANOMALY,
+    LAYER_COVERAGE,
     LAYER_MOTION,
     LAYER_SIGNAL,
     LAYER_VARIANCE,
@@ -252,10 +253,16 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _apply_ap_mappings(self) -> None:
         """Apply manual and auto-discovered area/floor assignments to APs and clients."""
         from .clients.base import APStats, RouterClient
-        from .registry_helpers import auto_link_ap_to_ha_device
+        from .registry_helpers import (
+            async_sync_device_area,
+            auto_link_ap_to_ha_device,
+        )
 
         node_area_map: dict[str, str] = self.entry.options.get("node_area_map", {})
         node_floor_map: dict[str, str] = self.entry.options.get("node_floor_map", {})
+        node_coords_map: dict[str, Any] = self.entry.options.get("node_coords_map", {})
+        room_coords_map: dict[str, Any] = self.entry.options.get("room_coords_map", {})
+        overwrite_registry: bool = self.entry.options.get("overwrite_ha_device_areas", False)
 
         # 1. Seed any AP configured in options that is not yet in ap_stats
         for raw_mac, area_id in node_area_map.items():
@@ -294,6 +301,43 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     ap.area_id = auto_area
                 if not ap.floor_id and auto_floor:
                     ap.floor_id = auto_floor
+
+            # 4. Sync area back to HA device registry
+            if ap.area_id:
+                async_sync_device_area(
+                    self.hass,
+                    ap.mac,
+                    ap.area_id,
+                    overwrite=overwrite_registry,
+                )
+
+            # 5. Register AP position on floor grid
+            floor_id = ap.floor_id or "default"
+            grid = self.grids.get(floor_id) or self.grids.get("default")
+            if grid:
+                coords = node_coords_map.get(mac) or node_coords_map.get(ap.mac)
+                if coords and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                    grid.set_ap_marker(
+                        ap.mac,
+                        ap.name or f"Deco {ap.mac[-5:]}",
+                        float(coords[0]),
+                        float(coords[1]),
+                        ap.area_id,
+                    )
+
+        # 6. Apply room label positions onto floor grids
+        for r_key, r_info in room_coords_map.items():
+            if isinstance(r_info, dict):
+                r_floor = r_info.get("floor_id") or "default"
+                grid = self.grids.get(r_floor) or self.grids.get("default")
+                if grid:
+                    grid.set_room_label(
+                        area_id=r_info.get("area_id") or r_key,
+                        name=r_info.get("name") or r_key,
+                        x_m=float(r_info.get("x_m", 0.0)),
+                        y_m=float(r_info.get("y_m", 0.0)),
+                        segment_id=r_info.get("segment_id"),
+                    )
 
         # Propagate AP area/floor onto associated clients
         for client in self.router_clients.values():
@@ -364,7 +408,13 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             scores = anomaly_scores.get(floor_id, {})
             layers: dict[str, bytes] = {}
 
-            for layer in [LAYER_SIGNAL, LAYER_VARIANCE, LAYER_MOTION, LAYER_ANOMALY]:
+            for layer in [
+                LAYER_SIGNAL,
+                LAYER_VARIANCE,
+                LAYER_MOTION,
+                LAYER_ANOMALY,
+                LAYER_COVERAGE,
+            ]:
                 try:
                     if layer == LAYER_SIGNAL:
                         png = await self.hass.async_add_executor_job(
@@ -377,6 +427,10 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     elif layer == LAYER_MOTION:
                         png = await self.hass.async_add_executor_job(
                             self._renderer.render_motion, grid
+                        )
+                    elif layer == LAYER_COVERAGE:
+                        png = await self.hass.async_add_executor_job(
+                            self._renderer.render_coverage, grid
                         )
                     else:  # anomaly
                         png = await self.hass.async_add_executor_job(

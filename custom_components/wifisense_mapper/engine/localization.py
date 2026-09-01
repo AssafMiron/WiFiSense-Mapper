@@ -249,13 +249,25 @@ class PersonTracker:
 
         if rssi is None or ap_mac is None:
             # Device not reporting / away or asleep
+            if area_name and area_name != "Unknown Room" and self.latest_state.area_name == "Unknown Room":
+                self.latest_state.area_name = area_name
+                self.latest_state.area_id = area_id
+            if floor_id:
+                self.latest_state.floor_id = floor_id
+                self.latest_state.floor_name = floor_name
+
             age = now - self.latest_state.last_seen_ts
             if age > STANDBY_MAX_AGE_S:
                 self.latest_state.activity = STATE_AWAY
                 self.latest_state.confidence = 0.0
             else:
                 # Decaying confidence, hold last location
-                decay_factor = max(0.0, 1.0 - (age - STANDBY_DECAY_START_S) / (STANDBY_MAX_AGE_S - STANDBY_DECAY_START_S))
+                decay_factor = max(
+                    0.0,
+                    1.0
+                    - (age - STANDBY_DECAY_START_S)
+                    / (STANDBY_MAX_AGE_S - STANDBY_DECAY_START_S),
+                )
                 # Boost if CSI motion is active in current area
                 if csi_motion_score > CSI_MOTION_MOVEMENT_THRESHOLD:
                     decay_factor = min(1.0, decay_factor + 0.3)
@@ -271,7 +283,10 @@ class PersonTracker:
         # 1. Floor Transition Feasibility Guard
         if floor_id != self.current_floor:
             elapsed_since_last_floor = now - self.last_floor_change_ts
-            if self.last_floor_change_ts > 0 and elapsed_since_last_floor < MIN_FLOOR_TRANSITION_TIME_S:
+            if (
+                self.last_floor_change_ts > 0
+                and elapsed_since_last_floor < MIN_FLOOR_TRANSITION_TIME_S
+            ):
                 # Feasibility violation (too fast vertical hop without transition time)
                 floor_id = self.current_floor
             else:
@@ -284,12 +299,18 @@ class PersonTracker:
         # 2. Raw Position Estimation (AP Position + Path Loss)
         if ap_pos_m is not None:
             raw_x, raw_y = ap_pos_m
-            # Simple path loss offset approximation: ~1m per 5 dB drop below -40 dBm
-            dist_est = max(0.0, (-40 - rssi) / 10.0)
-            # Add minor deterministic angle dispersion based on MAC
-            angle = (int(self.mac.replace(":", "")[-2:], 16) % 360) * (math.pi / 180.0)
-            target_x = max(0.0, min(grid_width_m, raw_x + dist_est * math.cos(angle)))
-            target_y = max(0.0, min(grid_height_m, raw_y + dist_est * math.sin(angle)))
+            if rssi is not None:
+                # Simple path loss offset approximation: ~1m per 5 dB drop below -40 dBm
+                dist_est = max(0.0, (-40 - rssi) / 10.0)
+                # Add minor deterministic angle dispersion based on MAC
+                angle = (int(self.mac.replace(":", "")[-2:], 16) % 360) * (math.pi / 180.0)
+                target_x = max(0.0, min(grid_width_m, raw_x + dist_est * math.cos(angle)))
+                target_y = max(0.0, min(grid_height_m, raw_y + dist_est * math.sin(angle)))
+            else:
+                # Coarse signal: center around the AP with slight dispersion
+                angle = (int(self.mac.replace(":", "")[-2:], 16) % 360) * (math.pi / 180.0)
+                target_x = max(0.0, min(grid_width_m, raw_x + 0.5 * math.cos(angle)))
+                target_y = max(0.0, min(grid_height_m, raw_y + 0.5 * math.sin(angle)))
         else:
             target_x = grid_width_m / 2.0
             target_y = grid_height_m / 2.0

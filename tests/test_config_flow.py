@@ -147,10 +147,10 @@ async def test_config_flow_deco_auto_detected_1_click_success(
 
 
 @pytest.mark.asyncio
-async def test_config_flow_deco_auto_detected_fallback_on_connect_fail(
+async def test_config_flow_deco_auto_detected_bridge_1_click(
     hass: HomeAssistant,
 ) -> None:
-    """Test fallback to manual router step if auto-connection fails."""
+    """Test 1-click Deco HA Bridge configuration when tplink_deco is detected."""
     mock_entry = MagicMock()
     mock_entry.entry_id = "tplink_entry_xyz"
     mock_entry.title = "http://192.168.1.246"
@@ -176,19 +176,13 @@ async def test_config_flow_deco_auto_detected_fallback_on_connect_fail(
         )
         opt_key = f"auto_{ROUTER_TYPE_DECO}_tplink_deco_{mock_entry.entry_id}"
 
-        with patch(
-            "custom_components.wifisense_mapper.clients.deco.DecoClient.async_connect",
-            AsyncMock(return_value=False),
-        ):
-            result2 = await hass.config_entries.flow.async_configure(
-                result["flow_id"],
-                {CONF_ROUTER_TYPE: opt_key},
-            )
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_ROUTER_TYPE: opt_key},
+        )
 
-        # Should fall back to the router step form with errors
-        assert result2["type"] == data_entry_flow.FlowResultType.FORM
-        assert result2["step_id"] == "router"
-        assert "cannot_connect" in result2["errors"].get("base", "")
+        assert result2["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
+        assert result2["data"][CONF_ROUTER_TYPE] == ROUTER_TYPE_DECO
 
 
 @pytest.mark.asyncio
