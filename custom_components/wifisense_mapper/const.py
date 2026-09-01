@@ -6,7 +6,7 @@ from typing import Final
 
 # Integration domain & version
 DOMAIN: Final = "wifisense_mapper"
-VERSION: Final = "0.2.2"
+VERSION: Final = "0.2.3"
 
 # Platforms to set up
 PLATFORMS: Final = [
