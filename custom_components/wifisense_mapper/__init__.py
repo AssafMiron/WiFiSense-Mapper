@@ -148,6 +148,7 @@ def _build_router_client(
             host=entry.data.get(CONF_ROUTER_HOST, ""),
             username=entry.data.get(CONF_ROUTER_USERNAME, "admin"),
             password=entry.data.get(CONF_ROUTER_PASSWORD, ""),
+            hass=hass,
         )
     elif router_type == ROUTER_TYPE_UNIFI:
         return UniFiClient(hass)
