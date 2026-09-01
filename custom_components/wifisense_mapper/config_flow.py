@@ -364,15 +364,19 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 person_options
             )
 
-        if not schema_dict:
-            schema_dict[
-                vol.Optional("info_no_clients", default="No WiFi clients detected yet")
-            ] = str
+        client_legend = (
+            "\n".join(f"• {name}" for name in list(clients.values())[:15])
+            if clients
+            else "*(No WiFi clients detected yet)*"
+        )
+        if len(clients) > 15:
+            client_legend += f"\n• ... and {len(clients) - 15} more devices"
 
         return self.async_show_form(
             step_id="person_tracking",
             data_schema=vol.Schema(schema_dict),
             description_placeholders={
+                "client_legend": client_legend,
                 "client_count": str(len(clients)),
             },
         )
@@ -416,13 +420,17 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 area_options
             )
 
-        if not schema_dict:
-            schema_dict[vol.Optional("info_no_aps", default="No APs detected yet")] = str
+        ap_legend = (
+            "\n".join(f"• {name}" for name in ap_list.values())
+            if ap_list
+            else "*(No AP hubs detected yet)*"
+        )
 
         return self.async_show_form(
             step_id="ap_mapping",
             data_schema=vol.Schema(schema_dict),
             description_placeholders={
+                "ap_legend": ap_legend,
                 "ap_count": str(len(ap_list)),
             },
         )
@@ -468,15 +476,17 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 area_options
             )
 
-        if not schema_dict:
-            schema_dict[
-                vol.Optional("info_no_vac", default="No vacuum room segments detected")
-            ] = str
+        seg_legend = (
+            "\n".join(f"• {name}" for name in segments.values())
+            if segments
+            else "*(No vacuum room segments detected)*"
+        )
 
         return self.async_show_form(
             step_id="vacuum_mapping",
             data_schema=vol.Schema(schema_dict),
             description_placeholders={
+                "seg_legend": seg_legend,
                 "segment_count": str(len(segments)),
             },
         )
@@ -546,7 +556,7 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         )
 
     def _get_known_aps(self) -> dict[str, str]:
-        """Return dict of ap_mac -> display name (matched with HA Device Registry)."""
+        """Return dict of ap_mac -> display name (matched with HA Device Registry & APStats)."""
         aps: dict[str, str] = {}
         from homeassistant.helpers import device_registry as dr
 
@@ -555,13 +565,19 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         dev_reg = dr.async_get(self.hass)
         mac_to_dev_name: dict[str, str] = {}
 
-        for device in dev_reg.devices.values():
-            dev_name = device.name_by_user or device.name
+        devices = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
+        for device in devices:
+            dev_name = device.name_by_user or device.name or device.model
             if not dev_name:
                 continue
             for conn in device.connections:
-                if len(conn) >= 2 and conn[0] == dr.CONNECTION_NETWORK_MAC:
+                if len(conn) >= 2:
                     norm = RouterClient.normalize_mac(str(conn[1]))
+                    if norm:
+                        mac_to_dev_name[norm] = dev_name
+            for ident in device.identifiers:
+                if len(ident) >= 2:
+                    norm = RouterClient.normalize_mac(str(ident[1]))
                     if norm:
                         mac_to_dev_name[norm] = dev_name
 
@@ -573,14 +589,21 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             if coordinator and coordinator.ap_stats:
                 for mac, ap in coordinator.ap_stats.items():
                     norm_mac = RouterClient.normalize_mac(mac)
-                    name_part = mac_to_dev_name.get(norm_mac) or ap.name or "Deco Hub"
+                    if not norm_mac:
+                        continue
+                    name_part = (
+                        mac_to_dev_name.get(norm_mac)
+                        or (ap.name if ap.name and ap.name.lower() != "deco hub" else None)
+                        or mac_to_dev_name.get(norm_mac.upper())
+                        or "Deco Hub"
+                    )
                     aps[norm_mac] = f"{name_part} ({norm_mac})"
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Could not read AP stats: %s", exc)
 
         for mac in self.config_entry.options.get("node_area_map", {}):
             norm_mac = RouterClient.normalize_mac(mac)
-            if norm_mac not in aps:
+            if norm_mac and norm_mac not in aps:
                 name_part = mac_to_dev_name.get(norm_mac) or "Deco Hub"
                 aps[norm_mac] = f"{name_part} ({norm_mac})"
 
@@ -621,10 +644,13 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             return []
 
     def _get_known_clients(self) -> dict[str, str]:
-        """Return dict of client_mac -> display name / hostname."""
+        """Return dict of client_mac -> display name / hostname from coordinator, device_trackers, and registry."""
         clients: dict[str, str] = {}
+        from homeassistant.helpers import device_registry as dr
+
         from .clients.base import RouterClient
 
+        # 1. Read live coordinator router clients
         try:
             entry_data = self.hass.data.get(DOMAIN, {}).get(
                 self.config_entry.entry_id, {}
@@ -633,15 +659,49 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             if coordinator and coordinator.router_clients:
                 for mac, client in coordinator.router_clients.items():
                     norm_mac = RouterClient.normalize_mac(mac)
-                    name_part = client.hostname or client.ip or "Client"
-                    clients[norm_mac] = f"{name_part} ({norm_mac})"
+                    if norm_mac:
+                        name_part = client.hostname or client.ip or f"Client {norm_mac}"
+                        clients[norm_mac] = f"{name_part} ({norm_mac})"
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Could not read client list: %s", exc)
 
+        # 2. Discover clients from HA device_tracker entities
+        for eid in self.hass.states.async_entity_ids("device_tracker"):
+            state = self.hass.states.get(eid)
+            if not state:
+                continue
+            attrs = state.attributes
+            raw_mac = attrs.get("mac") or attrs.get("mac_address") or attrs.get("wifi_mac")
+            if raw_mac:
+                norm_mac = RouterClient.normalize_mac(str(raw_mac))
+                if norm_mac and norm_mac not in clients:
+                    name_part = (
+                        attrs.get("friendly_name")
+                        or attrs.get("host_name")
+                        or attrs.get("hostname")
+                        or state.name
+                        or eid
+                    )
+                    clients[norm_mac] = f"{name_part} ({norm_mac})"
+
+        # 3. Discover network client devices from Device Registry
+        dev_reg = dr.async_get(self.hass)
+        dev_list = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
+        for device in dev_list:
+            dev_name = device.name_by_user or device.name or device.model
+            if not dev_name:
+                continue
+            for conn in device.connections:
+                if len(conn) >= 2:
+                    norm = RouterClient.normalize_mac(str(conn[1]))
+                    if norm and norm not in clients:
+                        clients[norm] = f"{dev_name} ({norm})"
+
+        # 4. Include configured person_tags overrides
         person_tags = self.config_entry.options.get(CONF_PERSON_TAGS, {})
         for mac, data in person_tags.items():
             norm_mac = RouterClient.normalize_mac(mac)
-            if norm_mac not in clients:
+            if norm_mac and norm_mac not in clients:
                 name = data.get("person_name") if isinstance(data, dict) else str(data)
                 clients[norm_mac] = f"{name or 'Tag'} ({norm_mac})"
 
