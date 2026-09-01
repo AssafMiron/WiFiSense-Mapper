@@ -116,7 +116,6 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
     carrying a phone is tracked; a person without a WiFi device is not.
     """
 
-    _attr_name = "Presence"
     _attr_device_class = BinarySensorDeviceClass.PRESENCE
     _attr_icon = "mdi:account-check"
 
@@ -131,7 +130,7 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
         super().__init__(coordinator, entry, f"presence_{area_id}", device_info)
         self._area_id = area_id
         self._area_name = area_name
-        self._attr_name = f"{area_name} Presence"
+        self._attr_name = "Presence"
 
     @property
     def is_on(self) -> bool:
@@ -236,7 +235,7 @@ class ObjectAnomalyBinarySensor(WiFiSenseBaseBinary):
         super().__init__(coordinator, entry, f"anomaly_binary_{floor_id}", device_info)
         self._floor_id = floor_id
         self._threshold = threshold
-        self._attr_name = f"{floor_name} Object Anomaly"
+        self._attr_name = "Object Anomaly"
 
     @property
     def is_on(self) -> bool:
@@ -285,7 +284,7 @@ class CSIMotionBinarySensor(WiFiSenseBaseBinary):
     ) -> None:
         super().__init__(coordinator, entry, f"csi_motion_{floor_id}", device_info)
         self._floor_id = floor_id
-        self._attr_name = f"{floor_name} CSI Motion"
+        self._attr_name = "CSI Motion"
 
     @property
     def is_on(self) -> bool:

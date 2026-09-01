@@ -135,7 +135,6 @@ class WiFiSenseBaseSensor(CoordinatorEntity[WiFiSenseCoordinator], SensorEntity)
 class WifiClientCountSensor(WiFiSenseBaseSensor):
     """Number of WiFi clients associated to APs on a given floor."""
 
-    _attr_name = "WiFi Client Count"
     _attr_icon = "mdi:wifi"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "clients"
@@ -151,7 +150,7 @@ class WifiClientCountSensor(WiFiSenseBaseSensor):
         super().__init__(coordinator, entry, f"client_count_{floor_id}", device_info)
         self._floor_id = floor_id
         self._floor_name = floor_name
-        self._attr_name = f"{floor_name} WiFi Client Count"
+        self._attr_name = "WiFi Client Count"
 
     @property
     def native_value(self) -> int:
@@ -191,7 +190,7 @@ class RSSISignalSensor(WiFiSenseBaseSensor):
             coordinator, entry, f"rssi_{ap_mac.replace(':', '_')}", device_info
         )
         self._ap_mac = ap_mac
-        self._attr_name = f"{ap_name} Average RSSI"
+        self._attr_name = "Average RSSI"
 
     @property
     def native_value(self) -> float | None:
@@ -238,7 +237,7 @@ class CSIMotionScoreSensor(WiFiSenseBaseSensor):
     ) -> None:
         super().__init__(coordinator, entry, f"csi_score_{node.device_id}", device_info)
         self._node = node
-        self._attr_name = f"{node.name} Motion Score"
+        self._attr_name = "Motion Score"
 
     @property
     def native_value(self) -> float | None:
@@ -273,7 +272,7 @@ class AnomalyScoreSensor(WiFiSenseBaseSensor):
     ) -> None:
         super().__init__(coordinator, entry, f"anomaly_{floor_id}", device_info)
         self._floor_id = floor_id
-        self._attr_name = f"{floor_name} Anomaly Score"
+        self._attr_name = "Anomaly Score"
 
     @property
     def native_value(self) -> float | None:
@@ -298,7 +297,7 @@ class AnomalyScoreSensor(WiFiSenseBaseSensor):
 class MeshCoverageSensor(WiFiSenseBaseSensor):
     """Overall mesh coverage, cross-coverage, and dead-zone detector."""
 
-    _attr_name = "WiFi Mesh Coverage Status"
+    _attr_name = "Coverage"
     _attr_icon = "mdi:access-point-network"
 
     def __init__(
@@ -347,7 +346,7 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
         super().__init__(coordinator, entry, f"area_coverage_{area_id}", device_info)
         self._area_id = area_id
         self._area_name = area_name
-        self._attr_name = f"{area_name} WiFi Coverage"
+        self._attr_name = "WiFi Coverage"
 
     @property
     def native_value(self) -> str:
@@ -408,7 +407,7 @@ class WifiSensePersonLocationSensor(WiFiSenseBaseSensor):
         super().__init__(coordinator, entry, f"person_location_{mac}", device_info)
         self._mac = mac
         self._person_name = person_name
-        self._attr_name = f"{person_name} Location"
+        self._attr_name = "Location"
 
     @property
     def native_value(self) -> str:
@@ -448,7 +447,7 @@ class WifiSensePersonActivitySensor(WiFiSenseBaseSensor):
         super().__init__(coordinator, entry, f"person_activity_{mac}", device_info)
         self._mac = mac
         self._person_name = person_name
-        self._attr_name = f"{person_name} Activity"
+        self._attr_name = "Activity"
 
     @property
     def native_value(self) -> str:
@@ -491,7 +490,7 @@ class WifiSensePersonCoordinatesSensor(WiFiSenseBaseSensor):
         super().__init__(coordinator, entry, f"person_coordinates_{mac}", device_info)
         self._mac = mac
         self._person_name = person_name
-        self._attr_name = f"{person_name} Coordinates"
+        self._attr_name = "Coordinates"
 
     @property
     def native_value(self) -> str:

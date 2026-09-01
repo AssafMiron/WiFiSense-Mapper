@@ -154,6 +154,7 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
     """
 
     _attr_has_entity_name = True
+    _attr_name: str | None = None
     _attr_source_type = SourceType.ROUTER
 
     def __init__(
@@ -172,15 +173,6 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
     @property
     def device_info(self) -> DeviceInfo:
         return self._device_info
-
-    @property
-    def name(self) -> str:
-        client = self.coordinator.router_clients.get(self._mac)
-        return (
-            client.hostname or f"Device {self._mac}"
-            if client
-            else f"Device {self._mac}"
-        )
 
     @property
     def is_connected(self) -> bool:
