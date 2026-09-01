@@ -290,7 +290,9 @@ def test_auto_link_prioritizes_room_name_over_inherited_area(hass: HomeAssistant
 
 def test_async_sync_device_area(hass: HomeAssistant) -> None:
     """Test async_sync_device_area updates blank area and honors overwrite flag."""
-    from custom_components.wifisense_mapper.registry_helpers import async_sync_device_area
+    from custom_components.wifisense_mapper.registry_helpers import (
+        async_sync_device_area,
+    )
 
     mock_dev_reg = MagicMock()
     mock_device = MagicMock()
