@@ -281,8 +281,8 @@ class AnomalyScoreSensor(WiFiSenseBaseSensor):
         data = self.coordinator.data or {}
         scores = data.get("anomaly_scores", {}).get(self._floor_id, {})
         bl = self.coordinator.baselines.get(self._floor_id)
-        if not scores or bl is None:
-            return None
+        if bl is None or not scores:
+            return 0.0
         return round(bl.max_anomaly_score(scores), 2)
 
     @property
