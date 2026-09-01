@@ -152,7 +152,27 @@ def auto_link_ap_to_ha_device(
         if matched_device:
             break
 
-    # If device is found and assigned to an Area in HA
+    all_areas = get_all_areas(hass)
+    effective_name = ap_name or (
+        (matched_device.name_by_user or matched_device.name) if matched_device else None
+    )
+
+    # 1. Prioritize room name matching from device name (e.g. "Bedroom Deco" -> "bedroom" area)
+    # This prevents blindly inheriting a default integration-level area like "office".
+    if effective_name:
+        suggested_area = suggest_area_for_node(effective_name, all_areas)
+        if suggested_area:
+            floor = get_floor_for_area(hass, suggested_area.id)
+            floor_id = floor.floor_id if floor else None
+            _LOGGER.debug(
+                "Name-matched AP %s (%s) to area %s",
+                ap_mac,
+                effective_name,
+                suggested_area.id,
+            )
+            return (suggested_area.id, floor_id)
+
+    # 2. If device is found and assigned to an Area in HA
     if matched_device and matched_device.area_id:
         area_id = matched_device.area_id
         floor = get_floor_for_area(hass, area_id)
@@ -166,23 +186,69 @@ def auto_link_ap_to_ha_device(
         )
         return (area_id, floor_id)
 
-    # 2. Fallback: Fuzzy match AP name to HA Area names
-    all_areas = get_all_areas(hass)
-    name_to_check = ap_name or (matched_device.name if matched_device else None)
-    if name_to_check:
-        suggested_area = suggest_area_for_node(name_to_check, all_areas)
-        if suggested_area:
-            floor = get_floor_for_area(hass, suggested_area.id)
-            floor_id = floor.floor_id if floor else None
-            _LOGGER.debug(
-                "Fuzzy-matched AP %s (%s) to area %s",
-                ap_mac,
-                name_to_check,
-                suggested_area.id,
-            )
-            return (suggested_area.id, floor_id)
-
     return (None, None)
+
+
+def async_sync_device_area(
+    hass: HomeAssistant,
+    ap_mac: str,
+    area_id: str,
+    overwrite: bool = False,
+) -> bool:
+    """Synchronize an AP/node's area assignment back to Home Assistant's Device Registry.
+
+    If the device's area_id in HA is blank, it is automatically updated.
+    If already assigned, it is only updated if overwrite=True.
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    dev_reg = dr.async_get(hass)
+    norm_mac = str(ap_mac).lower().replace("-", ":").replace(".", ":")
+
+    devices = (
+        dev_reg.devices.values()
+        if hasattr(dev_reg.devices, "values")
+        else dev_reg.devices
+    )
+    for device in devices:
+        if isinstance(device, str):
+            continue
+        matched = False
+        for conn in device.connections:
+            if (
+                len(conn) >= 2
+                and str(conn[1]).lower().replace("-", ":").replace(".", ":") == norm_mac
+            ):
+                matched = True
+                break
+        if not matched:
+            for ident in device.identifiers:
+                if (
+                    len(ident) >= 2
+                    and str(ident[1]).lower().replace("-", ":").replace(".", ":") == norm_mac
+                ):
+                    matched = True
+                    break
+
+        if matched:
+            if not device.area_id or overwrite or device.area_id == area_id:
+                if device.area_id != area_id:
+                    dev_reg.async_update_device(device.id, area_id=area_id)
+                    _LOGGER.info(
+                        "Updated HA Device Registry: Device '%s' (%s) area set to '%s'",
+                        device.name,
+                        ap_mac,
+                        area_id,
+                    )
+                return True
+            _LOGGER.debug(
+                "Device '%s' already has area '%s'; not overwriting without explicit consent",
+                device.name,
+                device.area_id,
+            )
+            return False
+
+    return False
 
 
 def get_area_name_from_id(hass: HomeAssistant, area_id: str | None) -> str:

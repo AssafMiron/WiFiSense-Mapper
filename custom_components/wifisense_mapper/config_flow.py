@@ -124,7 +124,11 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         for router in self._discovered_routers:
             if router.router_type == ROUTER_TYPE_DECO:
                 opt_key = f"auto_{router.discovery_id}"
-                if router.password:
+                if router.is_bridge_only:
+                    options[opt_key] = (
+                        "TP-Link Deco (HA Bridge via existing integration — Recommended)"
+                    )
+                elif router.password:
                     options[opt_key] = (
                         f"TP-Link Deco (Detected at {router.host} — 1-Click Auto Setup)"
                     )
@@ -139,7 +143,7 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 options[ROUTER_TYPE_UNIFI] = "UniFi (Detected — bridge via HA integration)"
 
         # Manual / Standard options
-        options[ROUTER_TYPE_DECO] = "TP-Link Deco (Manual configuration)"
+        options[ROUTER_TYPE_DECO] = "TP-Link Deco (Manual direct connection)"
         if ROUTER_TYPE_UNIFI not in options:
             options[ROUTER_TYPE_UNIFI] = "UniFi (bridge via HA integration)"
         options[ROUTER_TYPE_NONE] = "None (CSI / vacuum only)"
@@ -399,6 +403,10 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         ap_list = self._get_known_aps()
 
         if user_input is not None:
+            from .registry_helpers import async_sync_device_area
+
+            overwrite_ha = user_input.get("overwrite_ha_device_areas", False)
+            current["overwrite_ha_device_areas"] = overwrite_ha
             updated_map = dict(current_node_areas)
             for mac, label in ap_list.items():
                 val = (
@@ -408,6 +416,7 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 )
                 if val:
                     updated_map[mac] = val
+                    async_sync_device_area(self.hass, mac, val, overwrite=overwrite_ha)
                 elif mac in updated_map:
                     updated_map.pop(mac)
             current["node_area_map"] = updated_map
@@ -419,6 +428,12 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             schema_dict[vol.Optional(label, default=default_area)] = vol.In(
                 area_options
             )
+        schema_dict[
+            vol.Optional(
+                "overwrite_ha_device_areas",
+                default=current.get("overwrite_ha_device_areas", False),
+            )
+        ] = bool
 
         ap_legend = (
             "\n".join(f"• {name}" for name in ap_list.values())
