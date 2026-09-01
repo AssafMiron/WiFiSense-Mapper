@@ -450,3 +450,98 @@ async def test_deco_ha_bridge_mode(hass) -> None:
     assert ap_stats[0].area_id == "kitchen"
     assert ap_stats[0].client_count == 1
 
+
+def test_normalize_mac_validation() -> None:
+    """Test RouterClient.normalize_mac strict validation."""
+    from custom_components.wifisense_mapper.clients.base import RouterClient
+
+    # Valid MACs in different formats
+    assert RouterClient.normalize_mac("B0-A7-B9-BB-36-58") == "b0:a7:b9:bb:36:58"
+    assert RouterClient.normalize_mac("b0:a7:b9:bb:36:58") == "b0:a7:b9:bb:36:58"
+    assert RouterClient.normalize_mac("b0a7b9bb3658") == "b0:a7:b9:bb:36:58"
+    assert RouterClient.normalize_mac("B0A7B9BB3658") == "b0:a7:b9:bb:36:58"
+
+    # Non-MAC strings / nicknames / invalid inputs must return empty string
+    assert RouterClient.normalize_mac("office") == ""
+    assert RouterClient.normalize_mac("bedroom") == ""
+    assert RouterClient.normalize_mac("Office Deco") == ""
+    assert RouterClient.normalize_mac("") == ""
+    assert RouterClient.normalize_mac(None) == ""  # type: ignore[arg-type]
+    assert RouterClient.normalize_mac("12345") == ""
+
+
+def test_deco_client_parses_node_nicknames_and_various_signals() -> None:
+    """Test Deco client correctly attributes AP MAC when ap_name is a nickname and handles signals."""
+    client = DecoClient("192.168.0.1", "admin", "secret_pass")
+    client._client = MagicMock()
+
+    # Mock Deco nodes with nicknames
+    client._client.request.side_effect = [
+        # 1. admin/device?form=device_list
+        {
+            "device_list": [
+                {
+                    "mac": "b0:a7:b9:bb:36:58",
+                    "custom_nickname": "Office",
+                    "device_model": "Deco X60",
+                    "role": "master",
+                },
+                {
+                    "mac": "b0:a7:b9:bb:2f:ac",
+                    "nickname": "Bedroom Deco",
+                    "device_model": "Deco X60",
+                    "role": "satellite",
+                },
+            ]
+        },
+        # 2. per-node client_list query 1
+        {"client_list": []},
+        # 3. per-node client_list query 2
+        {"client_list": []},
+        # 4. global fallback client_list
+        {
+            "client_list": [
+                {
+                    "mac": "11:22:33:44:55:aa",
+                    "name": "Assaf-Laptop",
+                    "ip": "192.168.68.110",
+                    "ap_name": "office",  # nickname instead of MAC
+                    "signal_level": "-68",  # string dBm
+                },
+                {
+                    "mac": "11:22:33:44:55:bb",
+                    "name": "Assaf-Phone",
+                    "ip": "192.168.68.111",
+                    "ap_name": "bedroom",  # stripped nickname
+                    "signal_level": 3,  # 3 bars
+                },
+                {
+                    "mac": "11:22:33:44:55:cc",
+                    "name": "Smart-TV",
+                    "ip": "192.168.68.112",
+                    "device_mac": "non-existent-ap",  # invalid ap
+                    "signal_level": {"band5": -62},  # dict
+                },
+            ]
+        },
+    ]
+
+    clients = client._get_clients_sync()
+    assert len(clients) == 3
+
+    # Client 1: "office" -> resolved to b0:a7:b9:bb:36:58, signal parsed from str "-68" -> -68
+    c1 = next(c for c in clients if c.mac == "11:22:33:44:55:aa")
+    assert c1.ap_mac == "b0:a7:b9:bb:36:58"
+    assert c1.rssi == -68
+
+    # Client 2: "bedroom" -> resolved to b0:a7:b9:bb:2f:ac, signal 3 bars -> -55
+    c2 = next(c for c in clients if c.mac == "11:22:33:44:55:bb")
+    assert c2.ap_mac == "b0:a7:b9:bb:2f:ac"
+    assert c2.rssi == -55
+
+    # Client 3: invalid AP name -> None, dict band5 signal -> -62
+    c3 = next(c for c in clients if c.mac == "11:22:33:44:55:cc")
+    assert c3.ap_mac is None
+    assert c3.rssi == -62
+
+

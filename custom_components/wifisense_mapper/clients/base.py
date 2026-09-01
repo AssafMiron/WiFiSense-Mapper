@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
+
+_MAC_REGEX = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+_HEX12_REGEX = re.compile(r"^[0-9a-f]{12}$")
 
 
 @dataclass
@@ -129,9 +133,17 @@ class RouterClient(ABC):
 
     @staticmethod
     def normalize_mac(mac: str) -> str:
-        """Normalize a MAC address to lower-case colon-separated format."""
-        cleaned = mac.replace("-", ":").replace(".", ":").lower()
+        """Normalize a MAC address to lower-case colon-separated format.
+
+        Returns an empty string if the input is not a valid 6-byte MAC address.
+        """
+        if not mac or not isinstance(mac, str):
+            return ""
+        cleaned = mac.strip().replace("-", ":").replace(".", ":").lower()
         # Some routers return 12 hex chars without separators
-        if len(cleaned) == 12 and ":" not in cleaned:
+        if len(cleaned) == 12 and ":" not in cleaned and _HEX12_REGEX.fullmatch(cleaned):
             cleaned = ":".join(cleaned[i : i + 2] for i in range(0, 12, 2))
-        return cleaned
+        if _MAC_REGEX.fullmatch(cleaned):
+            return cleaned
+        return ""
+
