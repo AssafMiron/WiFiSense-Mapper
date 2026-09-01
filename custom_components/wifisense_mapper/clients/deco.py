@@ -116,7 +116,7 @@ class DecoClient(RouterClient):
                     if isinstance(raw_list, list) and raw_list:
                         nodes = raw_list
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.debug("Direct device_list request failed: %s", exc)
+                _LOGGER.warning("Direct Deco device_list request failed: %s", exc)
 
         if not nodes:
             cached = getattr(self._client, "devices", [])
@@ -136,24 +136,25 @@ class DecoClient(RouterClient):
 
     def _extract_node_name(self, node: dict[str, Any]) -> str:
         """Extract the friendly name of a Deco mesh node, decoding base64 if needed."""
-        # 1. custom_nickname
-        if node.get("custom_nickname"):
-            return self._decode_string(node["custom_nickname"])
-        # 2. nickname (commonly base64 encoded)
-        if node.get("nickname"):
-            dec = self._decode_string(node["nickname"])
-            if dec:
-                return dec
-        # 3. custom_name / name
-        if node.get("custom_name"):
-            return self._decode_string(node["custom_name"])
-        if node.get("name"):
-            dec = self._decode_string(node["name"])
-            if dec:
-                return dec
-        # 4. device_model / model fallback
-        model = node.get("device_model") or node.get("model") or "Deco"
-        return str(model).strip()
+        # 1. custom_nickname / nickname
+        for key in ("custom_nickname", "nickname", "custom_name", "alias", "room", "room_name", "location", "device_name", "dev_name", "name", "label", "title"):
+            val = node.get(key)
+            if val:
+                dec = self._decode_string(val)
+                if dec and dec.lower() not in ("deco", "deco hub", "unknown", "null", "none"):
+                    return dec
+
+        # 2. device_model / model fallback with role
+        model = node.get("device_model") or node.get("model") or node.get("model_name") or node.get("hardware_ver") or "Deco"
+        model_str = str(model).strip()
+        role = node.get("role")
+        role_suffix = f" ({str(role).capitalize()})" if role and str(role).lower() in ("master", "main", "satellite", "slave") else ""
+
+        if model_str and model_str.lower() != "deco":
+            prefix = "" if "deco" in model_str.lower() else "Deco "
+            return f"{prefix}{model_str}{role_suffix}"
+
+        return f"Deco Hub{role_suffix}"
 
     def _get_clients_sync(self) -> list[ClientInfo]:
         """Blocking client fetch — runs in executor.
