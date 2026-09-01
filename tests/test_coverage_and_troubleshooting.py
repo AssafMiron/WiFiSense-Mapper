@@ -116,3 +116,133 @@ async def test_diagnostics_dump(hass: HomeAssistant, mock_config_entry_no_router
     assert "coverage_summary" in diag
     assert "recent_logs" in diag
 
+
+@pytest.mark.asyncio
+async def test_options_flow_placeholders_contain_legends(
+    hass: HomeAssistant, mock_config_entry_no_router
+) -> None:
+    """Test that options flow steps provide all required legend placeholders for formatjs."""
+    mock_config_entry_no_router.add_to_hass(hass)
+
+    # 1. ap_mapping step placeholders
+    result1 = await hass.config_entries.options.async_init(
+        mock_config_entry_no_router.entry_id
+    )
+    result_ap = await hass.config_entries.options.async_configure(
+        result1["flow_id"],
+        {"next_step_id": "ap_mapping"},
+    )
+    assert "ap_legend" in result_ap["description_placeholders"]
+    assert "ap_count" in result_ap["description_placeholders"]
+
+    # 2. vacuum_mapping step placeholders
+    result2 = await hass.config_entries.options.async_init(
+        mock_config_entry_no_router.entry_id
+    )
+    result_vac = await hass.config_entries.options.async_configure(
+        result2["flow_id"],
+        {"next_step_id": "vacuum_mapping"},
+    )
+    assert "seg_legend" in result_vac["description_placeholders"]
+    assert "segment_count" in result_vac["description_placeholders"]
+
+    # 3. person_tracking step placeholders
+    result3 = await hass.config_entries.options.async_init(
+        mock_config_entry_no_router.entry_id
+    )
+    result_person = await hass.config_entries.options.async_configure(
+        result3["flow_id"],
+        {"next_step_id": "person_tracking"},
+    )
+    assert "client_legend" in result_person["description_placeholders"]
+    assert "client_count" in result_person["description_placeholders"]
+
+
+@pytest.mark.asyncio
+async def test_device_tracker_instantiates_directly_from_person_tags(
+    hass: HomeAssistant,
+) -> None:
+    """Test that device_tracker entities are created for person_tags even before router poll."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.wifisense_mapper.const import CONF_PERSON_TAGS, DOMAIN
+    from custom_components.wifisense_mapper.device_tracker import async_setup_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="test_dt_entry",
+        data={"router_type": "none"},
+        options={
+            CONF_PERSON_TAGS: {
+                "b0:a7:b9:bb:11:22": {
+                    "person_entity_id": "person.john",
+                    "person_name": "John Phone",
+                }
+            }
+        },
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = WiFiSenseCoordinator(hass, entry, router_client=None)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    added_entities = []
+    await async_setup_entry(hass, entry, added_entities.extend)
+
+    assert len(added_entities) == 1
+    tracker = added_entities[0]
+    assert tracker._mac == "b0:a7:b9:bb:11:22"
+    assert tracker.device_info["name"] == "John Phone"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_seeds_ap_stats_from_node_area_map(
+    hass: HomeAssistant,
+) -> None:
+    """Test that coordinator seeds self.ap_stats from node_area_map in options."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.wifisense_mapper.const import DOMAIN
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="test_ap_seed_entry",
+        data={"router_type": "none"},
+        options={
+            "node_area_map": {
+                "b0:a7:b9:bb:2f:ac": "bedroom",
+                "b0:a7:b9:bb:32:30": "kitchen",
+                "b0:a7:b9:bb:36:58": "office",
+            }
+        },
+    )
+    entry.add_to_hass(hass)
+
+    coordinator = WiFiSenseCoordinator(hass, entry, router_client=None)
+    await coordinator.async_initialize()
+
+    assert "b0:a7:b9:bb:2f:ac" in coordinator.ap_stats
+    assert coordinator.ap_stats["b0:a7:b9:bb:2f:ac"].area_id == "bedroom"
+    assert coordinator.ap_stats["b0:a7:b9:bb:32:30"].area_id == "kitchen"
+    assert coordinator.ap_stats["b0:a7:b9:bb:36:58"].area_id == "office"
+
+
+@pytest.mark.asyncio
+async def test_anomaly_sensor_returns_zero_when_idle(
+    hass: HomeAssistant, mock_config_entry_no_router
+) -> None:
+    """Test that AnomalyScoreSensor returns 0.0 rather than None when idle."""
+    from custom_components.wifisense_mapper.sensor import AnomalyScoreSensor
+
+    mock_config_entry_no_router.add_to_hass(hass)
+    coordinator = WiFiSenseCoordinator(hass, mock_config_entry_no_router, router_client=None)
+    await coordinator.async_initialize()
+
+    mock_dev_info = MagicMock()
+    sensor = AnomalyScoreSensor(
+        coordinator, mock_config_entry_no_router, "ground", "Ground Floor", mock_dev_info
+    )
+
+    assert sensor.native_value == 0.0
+
+

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-08-31
+
+### Fixed
+- **Options Flow Translation & Formatting**:
+  - Provided missing formatjs translation placeholders (`ap_legend`, `seg_legend`, `client_legend`, `ap_count`, `segment_count`, `client_count`) across Options Flow steps to resolve `[formatjs Error: MISSING_VALUE]`.
+  - Replaced dummy input textboxes (`info_no_vac`, `info_no_clients`, `info_no_aps`) with clean descriptive summaries.
+- **Person WiFi Tracker Pipeline**:
+  - Instantiated `WifiSenseDeviceTracker` entities directly from `person_tags` and `tracked_client_macs` at setup time, ensuring person trackers exist immediately before live router client telemetry arrives.
+  - Enhanced client discovery in Options Flow across HA `device_tracker` entities and device registry devices.
+- **Deco AP Naming & Telemetry Seeding**:
+  - Expanded Deco node friendly name extraction across `custom_nickname`, `nickname`, `alias`, `room`, `location`, `device_name`, `model_name`, and `hardware_ver`.
+  - Auto-seeded `self.ap_stats` from `node_area_map` during coordinator initialize and updates, activating room presence sensors, `area_ap_map`, and AP RSSI sensors immediately.
+  - Elevated Deco client fetch errors from silent debug logs to warnings.
+- **Sensors**:
+  - Returned `0.0` default for `AnomalyScoreSensor.native_value` when idle to prevent `Unknown` state in UI.
+  - Added `presence_entity_id` fallback when evaluating CSI motion states.
+  - Fixed `matched_device` initialization in `registry_helpers.py` to prevent `UnboundLocalError`.
+
+---
+
 ## [0.2.1] - 2026-08-31
 
 ### Fixed

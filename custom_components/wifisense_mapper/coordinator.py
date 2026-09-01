@@ -189,7 +189,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.grids.setdefault("default", SpatialGrid(floor_id="default"))
             self.baselines.setdefault("default", BaselineLearner("default"))
 
-        # Set CSI node positions from area assignments
+        # Seed AP mappings and set CSI node positions from area assignments
+        self._apply_ap_mappings()
         self._update_node_positions()
 
     # ─── Main update cycle ────────────────────────────────────────────────────
@@ -209,6 +210,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._apply_ap_mappings()
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Router poll failed: %s", exc)
+
+        # Apply AP mappings regardless of router poll outcome so configured nodes exist
+        self._apply_ap_mappings()
 
         # 2. Read CSI entity states
         self._update_csi_states()
@@ -247,19 +251,41 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _apply_ap_mappings(self) -> None:
         """Apply manual and auto-discovered area/floor assignments to APs and clients."""
+        from .clients.base import APStats, RouterClient
         from .registry_helpers import auto_link_ap_to_ha_device
 
         node_area_map: dict[str, str] = self.entry.options.get("node_area_map", {})
         node_floor_map: dict[str, str] = self.entry.options.get("node_floor_map", {})
 
+        # 1. Seed any AP configured in options that is not yet in ap_stats
+        for raw_mac, area_id in node_area_map.items():
+            norm_mac = RouterClient.normalize_mac(raw_mac)
+            if not norm_mac:
+                continue
+            if norm_mac not in self.ap_stats:
+                self.ap_stats[norm_mac] = APStats(
+                    mac=norm_mac,
+                    name=None,
+                    area_id=area_id,
+                    floor_id=node_floor_map.get(raw_mac) or node_floor_map.get(norm_mac),
+                    client_count=0,
+                    extra={"configured_in_options": True},
+                )
+            else:
+                self.ap_stats[norm_mac].area_id = area_id
+                if raw_mac in node_floor_map or norm_mac in node_floor_map:
+                    self.ap_stats[norm_mac].floor_id = (
+                        node_floor_map.get(raw_mac) or node_floor_map.get(norm_mac)
+                    )
+
         for mac, ap in self.ap_stats.items():
-            # 1. Configured options override
+            # 2. Configured options override
             if mac in node_area_map:
                 ap.area_id = node_area_map[mac]
             if mac in node_floor_map:
                 ap.floor_id = node_floor_map[mac]
 
-            # 2. Auto-discovery from HA Device & Area Registry if unassigned
+            # 3. Auto-discovery from HA Device & Area Registry if unassigned
             if not ap.area_id or not ap.floor_id:
                 auto_area, auto_floor = auto_link_ap_to_ha_device(
                     self.hass, ap.mac, ap.name
@@ -291,10 +317,17 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     except ValueError:
                         pass
 
-            if node.motion_detected_entity_id:
-                state = self.hass.states.get(node.motion_detected_entity_id)
-                if state:
-                    node.motion_detected_value = state.state == "on"  # type: ignore[attr-defined]
+            motion_eid = node.motion_detected_entity_id or node.presence_entity_id
+            if motion_eid:
+                state = self.hass.states.get(motion_eid)
+                if state and state.state not in ("unknown", "unavailable"):
+                    node.motion_detected_value = state.state.lower() in (  # type: ignore[attr-defined]
+                        "on",
+                        "home",
+                        "detected",
+                        "motion",
+                        "true",
+                    )
 
     # ─── Spatial grid feeding ─────────────────────────────────────────────────
 

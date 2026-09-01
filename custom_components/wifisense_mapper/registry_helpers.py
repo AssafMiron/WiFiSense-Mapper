@@ -126,8 +126,12 @@ def auto_link_ap_to_ha_device(
 
     dev_reg = dr.async_get(hass)
     norm_mac = str(ap_mac).lower().replace("-", ":").replace(".", ":")
+    matched_device: dr.DeviceEntry | None = None
 
-    for device in dev_reg.devices.values():
+    devices = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
+    for device in devices:
+        if isinstance(device, str):
+            continue
         # Check connections
         for conn in device.connections:
             if len(conn) >= 2:
