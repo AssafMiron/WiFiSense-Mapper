@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .grid import SpatialGrid
@@ -55,6 +55,11 @@ COLORMAPS: dict[str, list[tuple[int, int, int]]] = {
         (0, 100, 0),  # dark green (0.3)
         (255, 200, 0),  # yellow     (0.7 = moderate anomaly)
         (255, 0, 0),  # red        (1.0 = high anomaly)
+    ],
+    "coverage": [
+        (35, 38, 48),  # dark gray/slate (0.0 = dead zone / unmonitored)
+        (46, 125, 50),  # forest green   (0.5 = single AP coverage)
+        (33, 150, 243),  # bright blue    (1.0 = multi-AP cross-coverage)
     ],
 }
 DEFAULT_COLORMAP = "thermal"
@@ -161,9 +166,12 @@ def _render_png_pillow(
     rows: int,
     cols: int,
     scale: int = 10,
+    room_labels: dict[str, dict[str, Any]] | None = None,
+    ap_markers: dict[str, dict[str, Any]] | None = None,
+    resolution_m: float = 0.5,
 ) -> bytes:
-    """Render pixel data to PNG bytes using Pillow."""
-    from PIL import Image  # type: ignore[import]
+    """Render pixel data to PNG bytes using Pillow with optional room & AP overlays."""
+    from PIL import Image, ImageDraw  # type: ignore[import]
 
     img = Image.new("RGB", (cols * scale, rows * scale))
     for r in range(rows):
@@ -172,6 +180,36 @@ def _render_png_pillow(
             for dy in range(scale):
                 for dx in range(scale):
                     img.putpixel((c * scale + dx, r * scale + dy), color)
+
+    draw = ImageDraw.Draw(img)
+
+    # 1. Draw Room Labels
+    if room_labels:
+        for rdata in room_labels.values():
+            rname = rdata.get("name", "")
+            rx_m = float(rdata.get("x_m", 0.0))
+            ry_m = float(rdata.get("y_m", 0.0))
+            px = int((rx_m / resolution_m) * scale)
+            py = int((ry_m / resolution_m) * scale)
+            if 0 <= px < cols * scale and 0 <= py < rows * scale and rname:
+                draw.text((px, py), rname, fill=(240, 240, 245))
+
+    # 2. Draw AP Markers (Deco mesh nodes)
+    if ap_markers:
+        for ap_mac, ap_data in ap_markers.items():
+            ap_name = ap_data.get("name") or f"Deco {ap_mac[-5:]}"
+            ap_x = float(ap_data.get("x_m", 0.0))
+            ap_y = float(ap_data.get("y_m", 0.0))
+            px = int((ap_x / resolution_m) * scale)
+            py = int((ap_y / resolution_m) * scale)
+            if 0 <= px < cols * scale and 0 <= py < rows * scale:
+                radius = max(4, scale // 2)
+                draw.ellipse(
+                    [px - radius, py - radius, px + radius, py + radius],
+                    fill=(0, 229, 255),
+                    outline=(255, 255, 255),
+                )
+                draw.text((px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255))
 
     import io
 
@@ -271,6 +309,7 @@ class HeatmapRenderer:
             vmin=RSSI_MIN,
             vmax=RSSI_MAX,
             colormap_name=self.colormap_name,
+            grid=grid,
         )
 
     def render_variance(self, grid: SpatialGrid) -> bytes:
@@ -287,13 +326,23 @@ class HeatmapRenderer:
             for r in range(grid.rows)
         ]
         return self._render(
-            matrix, grid.rows, grid.cols, colormap_name=self.colormap_name
+            matrix,
+            grid.rows,
+            grid.cols,
+            colormap_name=self.colormap_name,
+            grid=grid,
         )
 
     def render_motion(self, grid: SpatialGrid) -> bytes:
         """Render CSI motion score heatmap. Call in executor."""
         matrix = grid.to_csi_matrix()
-        return self._render(matrix, grid.rows, grid.cols, colormap_name="motion")
+        return self._render(
+            matrix,
+            grid.rows,
+            grid.cols,
+            colormap_name="motion",
+            grid=grid,
+        )
 
     def render_anomaly(
         self,
@@ -308,7 +357,30 @@ class HeatmapRenderer:
             [anomaly_scores.get((c, r)) for c in range(grid.cols)]
             for r in range(grid.rows)
         ]
-        return self._render(matrix, grid.rows, grid.cols, colormap_name="anomaly")
+        return self._render(
+            matrix,
+            grid.rows,
+            grid.cols,
+            colormap_name="anomaly",
+            grid=grid,
+        )
+
+    def render_coverage(
+        self,
+        grid: SpatialGrid,
+        ap_coverage_radius_m: float = 6.0,
+    ) -> bytes:
+        """Render multi-AP coverage and overlap heatmap. Call in executor."""
+        matrix = grid.compute_multi_ap_coverage(ap_coverage_radius_m)
+        return self._render(
+            matrix,
+            grid.rows,
+            grid.cols,
+            vmin=0.0,
+            vmax=2.0,
+            colormap_name="coverage",
+            grid=grid,
+        )
 
     def _render(
         self,
@@ -318,6 +390,7 @@ class HeatmapRenderer:
         vmin: float | None = None,
         vmax: float | None = None,
         colormap_name: str = DEFAULT_COLORMAP,
+        grid: SpatialGrid | None = None,
     ) -> bytes:
         """Internal render pipeline: IDW → normalize → colormap → PNG."""
         has_known = any(
@@ -328,7 +401,15 @@ class HeatmapRenderer:
             neutral_color = (24, 26, 32)
             pixel_data = [[neutral_color for _ in range(cols)] for _ in range(rows)]
             if self.pillow_available:
-                return _render_png_pillow(pixel_data, rows, cols, scale=self.cell_scale)
+                return _render_png_pillow(
+                    pixel_data,
+                    rows,
+                    cols,
+                    scale=self.cell_scale,
+                    room_labels=grid.room_labels if grid else None,
+                    ap_markers=grid.ap_markers if grid else None,
+                    resolution_m=grid.resolution_m if grid else 0.5,
+                )
             return _render_png_pure_python(
                 pixel_data, rows, cols, scale=self.cell_scale
             )
@@ -345,6 +426,14 @@ class HeatmapRenderer:
         ]
 
         if self.pillow_available:
-            return _render_png_pillow(pixel_data, rows, cols, scale=self.cell_scale)
+            return _render_png_pillow(
+                pixel_data,
+                rows,
+                cols,
+                scale=self.cell_scale,
+                room_labels=grid.room_labels if grid else None,
+                ap_markers=grid.ap_markers if grid else None,
+                resolution_m=grid.resolution_m if grid else 0.5,
+            )
         return _render_png_pure_python(pixel_data, rows, cols, scale=self.cell_scale)
 

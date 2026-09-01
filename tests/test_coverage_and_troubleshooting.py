@@ -246,3 +246,102 @@ async def test_anomaly_sensor_returns_zero_when_idle(
     assert sensor.native_value == 0.0
 
 
+def test_auto_link_prioritizes_room_name_over_inherited_area(hass: HomeAssistant) -> None:
+    """Test that device name 'Bedroom Deco' resolves to area 'bedroom' even if device was assigned to 'office' in HA."""
+    mock_dev_reg = MagicMock()
+    mock_area_reg = MagicMock()
+
+    mock_area_bedroom = MagicMock()
+    mock_area_bedroom.id = "bedroom"
+    mock_area_bedroom.name = "Bedroom"
+    mock_area_bedroom.floor_id = "first_floor"
+
+    mock_area_office = MagicMock()
+    mock_area_office.id = "office"
+    mock_area_office.name = "Office"
+    mock_area_office.floor_id = "ground_floor"
+
+    mock_area_reg.areas = {"bedroom": mock_area_bedroom, "office": mock_area_office}
+    mock_area_reg.async_get_area.side_effect = lambda aid: mock_area_reg.areas.get(aid)
+
+    mock_device = MagicMock()
+    mock_device.connections = {("mac", "b0:a7:b9:bb:2f:ac")}
+    mock_device.identifiers = {("tplink_deco", "b0:a7:b9:bb:2f:ac")}
+    mock_device.area_id = "office"  # Inherited/mismatched in HA
+    mock_device.name = "Bedroom Deco"
+    mock_device.name_by_user = None
+
+    mock_dev_reg.devices = {"device_1": mock_device}
+
+    mock_floor_reg = MagicMock()
+    mock_floor = MagicMock()
+    mock_floor.floor_id = "first_floor"
+    mock_floor_reg.async_get_floor.return_value = mock_floor
+
+    with (
+        patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg),
+        patch("homeassistant.helpers.area_registry.async_get", return_value=mock_area_reg),
+        patch("homeassistant.helpers.floor_registry.async_get", return_value=mock_floor_reg),
+    ):
+        area_id, floor_id = auto_link_ap_to_ha_device(hass, "b0:a7:b9:bb:2f:ac")
+        assert area_id == "bedroom"
+        assert floor_id == "first_floor"
+
+
+def test_async_sync_device_area(hass: HomeAssistant) -> None:
+    """Test async_sync_device_area updates blank area and honors overwrite flag."""
+    from custom_components.wifisense_mapper.registry_helpers import async_sync_device_area
+
+    mock_dev_reg = MagicMock()
+    mock_device = MagicMock()
+    mock_device.id = "dev_123"
+    mock_device.connections = {("mac", "b0:a7:b9:bb:32:30")}
+    mock_device.identifiers = {("tplink_deco", "b0:a7:b9:bb:32:30")}
+    mock_device.area_id = None
+    mock_device.name = "Kitchen Deco"
+
+    mock_dev_reg.devices = {"dev_123": mock_device}
+
+    with patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg):
+        # 1. Blank area is updated automatically
+        updated = async_sync_device_area(hass, "b0:a7:b9:bb:32:30", "kitchen", overwrite=False)
+        assert updated is True
+        mock_dev_reg.async_update_device.assert_called_with("dev_123", area_id="kitchen")
+
+        # 2. Existing area without overwrite does not update
+        mock_device.area_id = "kitchen"
+        updated2 = async_sync_device_area(hass, "b0:a7:b9:bb:32:30", "living_room", overwrite=False)
+        assert updated2 is False
+
+        # 3. Existing area with overwrite=True updates
+        updated3 = async_sync_device_area(hass, "b0:a7:b9:bb:32:30", "living_room", overwrite=True)
+        assert updated3 is True
+        mock_dev_reg.async_update_device.assert_called_with("dev_123", area_id="living_room")
+
+
+def test_multi_ap_coverage_and_overlays() -> None:
+    """Test multi-AP coverage matrix and rendering with room labels and AP markers."""
+    grid = SpatialGrid(floor_id="ground", width_m=10.0, height_m=10.0, resolution_m=0.5)
+    # Register 2 APs: Node 1 in (2, 5), Node 2 in (8, 5)
+    grid.set_ap_marker("b0:a7:b9:bb:32:30", "Kitchen Deco", 2.0, 5.0, "kitchen")
+    grid.set_ap_marker("b0:a7:b9:bb:36:58", "Office Deco", 8.0, 5.0, "office")
+    grid.set_room_label("kitchen", "Kitchen", 2.0, 5.0)
+    grid.set_room_label("office", "Office", 8.0, 5.0)
+    grid.set_room_label("corridor", "Corridor", 5.0, 5.0)
+
+    # Compute coverage
+    cov_matrix = grid.compute_multi_ap_coverage(ap_coverage_radius_m=4.0)
+    assert len(cov_matrix) == grid.rows
+    assert len(cov_matrix[0]) == grid.cols
+
+    # Middle cell at (5.0m, 5.0m) -> col = 10, row = 10 (dist ~ 3m from both APs, within 4m radius)
+    middle_val = cov_matrix[10][10]
+    assert middle_val == 2.0  # Cross-covered overlap zone
+
+    # Render coverage heatmap
+    renderer = HeatmapRenderer()
+    png_bytes = renderer.render_coverage(grid, ap_coverage_radius_m=4.0)
+    assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+
