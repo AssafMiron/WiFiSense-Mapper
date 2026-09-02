@@ -247,7 +247,7 @@ class PersonTracker:
         """Update tracker with fresh telemetry."""
         now = now_ts if now_ts is not None else time.time()
 
-        if rssi is None or ap_mac is None:
+        if ap_mac is None:
             # Device not reporting / away or asleep
             if area_name and area_name != "Unknown Room" and self.latest_state.area_name == "Unknown Room":
                 self.latest_state.area_name = area_name

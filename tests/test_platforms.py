@@ -138,7 +138,7 @@ class TestDeviceTracker:
             coord, mock_config_entry_no_router, "aa:bb:cc:dd:ee:01", dev_info
         )
         assert tracker.is_connected is True
-        assert tracker.name == "Alice Phone"
+        assert tracker.name is None
         assert tracker.state == "living_room"
         assert tracker.source_type == "router"
         assert tracker.latitude is None

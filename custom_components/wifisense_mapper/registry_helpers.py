@@ -59,14 +59,29 @@ def get_floor_for_area(hass: HomeAssistant, area_id: str) -> FloorEntry | None:
     return floor_reg.async_get_floor(area.floor_id)
 
 
+_GENERIC_NODE_NAMES = {
+    "deco",
+    "deco hub",
+    "unknown",
+    "null",
+    "none",
+    "router",
+    "ap",
+    "access point",
+    "mesh node",
+    "tplink",
+    "unifi",
+}
+
+
 def suggest_area_for_node(
     node_name: str,
     areas: list[AreaEntry],
 ) -> AreaEntry | None:
     """Fuzzy-match a CSI/router node name to the most likely area.
 
-    Uses Python's SequenceMatcher for approximate string matching.
-    Returns None if no area has a similarity score above 0.4.
+    Uses Python's SequenceMatcher and word-token matching for approximate string matching.
+    Returns None if no area has a similarity score above 0.6 or if node_name is generic.
 
     This is a heuristic only — the user should always be able to
     override area assignments via the Options Flow.
@@ -74,16 +89,53 @@ def suggest_area_for_node(
     if not areas or not node_name:
         return None
 
-    name_lower = node_name.lower()
+    cleaned_name = node_name.strip().lower()
+    if not cleaned_name or cleaned_name in _GENERIC_NODE_NAMES:
+        return None
+
+    # Remove common prefix/suffix words for comparison (e.g. "Bedroom Deco" -> "bedroom")
+    words = [
+        w
+        for w in cleaned_name.split()
+        if w not in ("deco", "ap", "hub", "node", "wifi", "wifisense", "router")
+    ]
+    core_name = " ".join(words) if words else cleaned_name
+
     best_match: AreaEntry | None = None
-    best_score = 0.4  # Minimum similarity threshold
+    best_score = 0.6  # Minimum similarity threshold
 
     for area in areas:
-        area_name_lower = (area.name or "").lower()
-        score = SequenceMatcher(None, name_lower, area_name_lower).ratio()
-        # Also check if area name appears as a substring of node name
-        if area_name_lower and area_name_lower in name_lower:
-            score = max(score, 0.7)
+        area_name_raw = area.name or ""
+        area_name_lower = area_name_raw.strip().lower()
+        if not area_name_lower:
+            continue
+
+        area_words = [
+            w for w in area_name_lower.split() if w not in ("room", "the", "area")
+        ]
+        core_area = " ".join(area_words) if area_words else area_name_lower
+
+        # Exact match of core names
+        if (
+            core_name == core_area
+            or core_name == area_name_lower
+            or cleaned_name == area_name_lower
+        ):
+            score = 1.0
+        # Substring / token inclusion
+        elif (
+            len(core_name) >= 3
+            and (core_name in area_name_lower or core_name in core_area)
+        ) or (
+            len(core_area) >= 3
+            and (core_area in cleaned_name or core_area in core_name)
+        ):
+            score = 0.85
+        elif any(len(w) >= 3 and w in area_words for w in words):
+            score = 0.75
+        else:
+            score = SequenceMatcher(None, core_name, core_area).ratio()
+
         if score > best_score:
             best_score = score
             best_match = area
@@ -173,7 +225,9 @@ def auto_link_ap_to_ha_device(
             return (suggested_area.id, floor_id)
 
     # 2. If device is found and assigned to an Area in HA
+    # Only inherit matched_device.area_id if ap_name was provided or matched_device name is non-generic
     if matched_device and matched_device.area_id:
+        # Check that matched_device has a valid non-empty area_id
         area_id = matched_device.area_id
         floor = get_floor_for_area(hass, area_id)
         floor_id = floor.floor_id if floor else None

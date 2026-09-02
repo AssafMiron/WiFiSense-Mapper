@@ -192,3 +192,35 @@ def test_person_localization_engine() -> None:
     states = engine.all_states()
     assert "aa:bb:cc:11:22:33" in states
     assert states["aa:bb:cc:11:22:33"].person_name == "Bob"
+
+
+def test_person_tracker_update_with_none_rssi() -> None:
+    """Test that PersonTracker updates room location when ap_mac is known but rssi is None."""
+    tracker = PersonTracker(
+        mac="AA:BB:CC:DD:EE:01",
+        person_entity_id="person.charlie",
+        person_name="Charlie",
+    )
+
+    now = 5000.0
+    state = tracker.update(
+        ap_mac="b0:a7:b9:bb:36:58",
+        rssi=None,
+        floor_id="ground_floor",
+        floor_name="Ground Floor",
+        area_id="office",
+        area_name="Office",
+        ap_pos_m=(4.0, 5.0),
+        grid_width_m=10.0,
+        grid_height_m=10.0,
+        now_ts=now,
+    )
+
+    assert state.area_name == "Office"
+    assert state.area_id == "office"
+    assert state.floor_id == "ground_floor"
+    assert state.ap_mac == "b0:a7:b9:bb:36:58"
+    assert state.last_seen_ts == now
+    assert state.activity != STATE_AWAY
+    assert state.confidence > 0.0
+

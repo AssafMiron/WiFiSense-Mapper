@@ -222,13 +222,45 @@ class DecoClient(RouterClient):
             if not mac_raw:
                 continue
             norm_m = self.normalize_mac(str(mac_raw))
+            if not norm_m:
+                continue
+            node_name_to_mac[norm_m] = norm_m
+            node_name_to_mac[str(mac_raw).strip().lower()] = norm_m
+
             name = self._extract_node_name(node)
             if name:
                 node_name_to_mac[name.lower()] = norm_m
+                if name.lower().endswith(" deco"):
+                    node_name_to_mac[name.lower()[:-5].strip()] = norm_m
+                if name.lower().startswith("deco "):
+                    node_name_to_mac[name.lower()[5:].strip()] = norm_m
+
+            for key in (
+                "custom_nickname",
+                "nickname",
+                "custom_name",
+                "alias",
+                "room",
+                "room_name",
+                "location",
+                "device_name",
+                "dev_name",
+                "name",
+                "label",
+                "title",
+            ):
+                val = node.get(key)
+                if val:
+                    val_str = str(val).strip().lower()
+                    if val_str:
+                        node_name_to_mac[val_str] = norm_m
+                    dec = self._decode_string(val).strip().lower()
+                    if dec:
+                        node_name_to_mac[dec] = norm_m
+
             model = node.get("device_model") or node.get("model")
             if model:
                 node_name_to_mac[str(model).strip().lower()] = norm_m
-            node_name_to_mac[norm_m] = norm_m
 
         # Per-node query loop (yields exact AP association and RSSI)
         seen_clients: dict[str, ClientInfo] = {}
@@ -239,18 +271,36 @@ class DecoClient(RouterClient):
                 if not node_mac:
                     continue
                 norm_node_mac = self.normalize_mac(str(node_mac))
-                try:
-                    payload = json.dumps({"operation": "read", "params": {"device_mac": str(node_mac)}})
-                    resp = self._client.request("admin/client?form=client_list", payload, ignore_errors=True)
-                    if isinstance(resp, dict):
-                        raw_clients = resp.get("client_list", [])
-                        if isinstance(raw_clients, list) and raw_clients:
-                            for item in raw_clients:
-                                client_info = self._parse_client_item(item, default_ap_mac=norm_node_mac, node_name_to_mac=node_name_to_mac)
-                                if client_info and client_info.mac:
-                                    seen_clients[client_info.mac] = client_info
-                except Exception as exc:  # noqa: BLE001
-                    _LOGGER.debug("Per-node client_list failed for node %s: %s", node_mac, exc)
+                if not norm_node_mac:
+                    continue
+                for mac_format in (
+                    str(node_mac),
+                    norm_node_mac,
+                    norm_node_mac.replace(":", "-"),
+                    norm_node_mac.replace(":", "").upper(),
+                ):
+                    try:
+                        payload = json.dumps({"operation": "read", "params": {"device_mac": mac_format}})
+                        resp = self._client.request("admin/client?form=client_list", payload, ignore_errors=True)
+                        if isinstance(resp, dict) and "client_list" in resp:
+                            raw_clients = resp.get("client_list", [])
+                            if isinstance(raw_clients, list):
+                                for item in raw_clients:
+                                    client_info = self._parse_client_item(
+                                        item,
+                                        default_ap_mac=norm_node_mac,
+                                        node_name_to_mac=node_name_to_mac,
+                                    )
+                                    if client_info and client_info.mac:
+                                        seen_clients[client_info.mac] = client_info
+                                break
+                    except Exception as exc:  # noqa: BLE001
+                        _LOGGER.debug(
+                            "Per-node client_list failed for node %s (%s): %s",
+                            node_mac,
+                            mac_format,
+                            exc,
+                        )
 
         # If per-node queries returned no clients, fallback to global client_list
         if not seen_clients and hasattr(self._client, "request"):
@@ -261,7 +311,9 @@ class DecoClient(RouterClient):
                     raw_clients = resp.get("client_list", [])
                     if isinstance(raw_clients, list) and raw_clients:
                         for item in raw_clients:
-                            client_info = self._parse_client_item(item, default_ap_mac=None, node_name_to_mac=node_name_to_mac)
+                            client_info = self._parse_client_item(
+                                item, default_ap_mac=None, node_name_to_mac=node_name_to_mac
+                            )
                             if client_info and client_info.mac:
                                 seen_clients[client_info.mac] = client_info
             except Exception as exc:  # noqa: BLE001
@@ -273,7 +325,9 @@ class DecoClient(RouterClient):
                 status = self._client.get_status()
                 raw_devices = getattr(status, "devices", None) or getattr(status, "clients", []) or []
                 for dev in raw_devices:
-                    client_info = self._parse_client_item(dev, default_ap_mac=None, node_name_to_mac=node_name_to_mac)
+                    client_info = self._parse_client_item(
+                        dev, default_ap_mac=None, node_name_to_mac=node_name_to_mac
+                    )
                     if client_info and client_info.mac:
                         seen_clients[client_info.mac] = client_info
             except Exception as exc:  # noqa: BLE001
@@ -305,6 +359,9 @@ class DecoClient(RouterClient):
             return None
 
         mac = self.normalize_mac(str(mac_raw))
+        if not mac:
+            return None
+
         ip = (
             data.get("ip")
             or data.get("ipaddr")
@@ -322,14 +379,38 @@ class DecoClient(RouterClient):
         hostname = self._decode_string(raw_name) if raw_name else None
 
         # Extract RSSI / signal level
+        def _parse_signal(val: Any) -> int | None:
+            if val is None:
+                return None
+            if isinstance(val, (int, float)):
+                v = int(val)
+            elif isinstance(val, str):
+                s = val.strip()
+                try:
+                    v = int(float(s))
+                except (ValueError, TypeError):
+                    return None
+            else:
+                return None
+
+            # If positive bars (1..3 or 1..5)
+            if 1 <= v <= 3:
+                return -85 + (v - 1) * 15  # 1 -> -85, 2 -> -70, 3 -> -55
+            if 4 <= v <= 5:
+                return -55 + (v - 3) * 5
+            if 0 < v <= 100:
+                return int(-100 + (v * 0.6))
+            if v < 0:
+                return v
+            return None
+
         rssi: int | None = None
         sig_lvl = data.get("signal_level")
         if isinstance(sig_lvl, dict):
             val = sig_lvl.get("band5") or sig_lvl.get("band2_4") or sig_lvl.get("band6")
-            if isinstance(val, (int, float)):
-                rssi = int(val)
-        elif isinstance(sig_lvl, (int, float)):
-            rssi = int(sig_lvl)
+            rssi = _parse_signal(val)
+        else:
+            rssi = _parse_signal(sig_lvl)
 
         if rssi is None:
             raw_sig = (
@@ -337,12 +418,17 @@ class DecoClient(RouterClient):
                 if data.get("signal") is not None
                 else data.get("rssi")
                 if data.get("rssi") is not None
+                else data.get("signal_strength")
+                if data.get("signal_strength") is not None
+                else data.get("snr")
+                if data.get("snr") is not None
                 else getattr(item, "signal", None)
                 if getattr(item, "signal", None) is not None
                 else getattr(item, "rssi", None)
+                if getattr(item, "rssi", None) is not None
+                else getattr(item, "signal_strength", None)
             )
-            if isinstance(raw_sig, (int, float)):
-                rssi = int(raw_sig)
+            rssi = _parse_signal(raw_sig)
 
         # AP MAC attribution
         ap_mac = default_ap_mac
@@ -351,16 +437,22 @@ class DecoClient(RouterClient):
                 data.get("device_mac")
                 or data.get("ap_mac")
                 or data.get("ap_name")
+                or data.get("node_name")
                 or getattr(item, "ap_name", None)
                 or getattr(item, "device_mac", None)
                 or getattr(item, "ap_mac", None)
+                or getattr(item, "node_name", None)
             )
             if ap_raw:
                 ap_str = str(ap_raw).strip()
+                ap_str_decoded = self._decode_string(ap_str).strip()
                 if ap_str.lower() in node_name_to_mac:
                     ap_mac = node_name_to_mac[ap_str.lower()]
+                elif ap_str_decoded.lower() in node_name_to_mac:
+                    ap_mac = node_name_to_mac[ap_str_decoded.lower()]
                 else:
-                    ap_mac = self.normalize_mac(ap_str) or None
+                    norm = self.normalize_mac(ap_str)
+                    ap_mac = norm if norm else None
 
         # Band / SSID
         band = (
