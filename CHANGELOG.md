@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.4] - 2026-09-02
+
+### Fixed
+- **Entity Naming & HA Best Practices**:
+  - Deduplicated friendly names for entities where `has_entity_name = True` across image, binary sensor, and sensor platforms to prevent stuttering names in Home Assistant UI (e.g., avoiding "Ground Floor Heatmap Ground Floor Heatmap").
+- **Deco AP & Client Attribution**:
+  - Supported AP nickname-to-MAC resolution when Deco reports AP names as node nicknames (e.g., "office", "bedroom") instead of MAC addresses.
+  - Added support for Deco string dBm, bar levels (1–4 bars converted to dBm), and multi-band RSSI dictionary formats.
+  - Added strict MAC format validation in `RouterClient.normalize_mac` to prevent room names and nicknames from being treated as valid MACs.
+- **Area Matching & Auto-Discovery**:
+  - Guarded AP auto-matching against generic node names (e.g., "Main Deco", "Deco X60", "Living Room Deco") and misaligned parent integration areas.
+- **Person Tracker Standby Telemetry**:
+  - Resolved room tracking and active states when client AP is known even if RSSI is null or unmeasured.
+
+---
+
 ## [0.2.3] - 2026-09-01
 
 ### Added
