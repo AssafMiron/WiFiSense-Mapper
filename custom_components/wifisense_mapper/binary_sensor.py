@@ -23,7 +23,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import WiFiSenseCoordinator
-from .sensor import _floor_device_info, _get_floor_name
+from .sensor import _get_floor_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,32 +39,35 @@ async def async_setup_entry(
 
     entities: list[BinarySensorEntity] = []
 
+    # Main integration hub device info (Service Hub)
+    # Binary sensors attach directly here to prevent device proliferation.
+    from homeassistant.helpers.device_registry import DeviceEntryType
+
+    from .registry_helpers import get_all_areas
+
+    hub_device_info = DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="WiFiSense Mapper",
+        manufacturer=MANUFACTURER,
+        model=MODEL,
+        entry_type=DeviceEntryType.SERVICE,
+    )
+
     for floor_id in coordinator.grids:
         floor_name = _get_floor_name(hass, floor_id)
-        device_info = _floor_device_info(entry, floor_id, floor_name)
-
         entities.append(
             ObjectAnomalyBinarySensor(
-                coordinator, entry, floor_id, floor_name, threshold, device_info
+                coordinator, entry, floor_id, floor_name, threshold, hub_device_info
             )
         )
         entities.append(
-            CSIMotionBinarySensor(coordinator, entry, floor_id, floor_name, device_info)
+            CSIMotionBinarySensor(coordinator, entry, floor_id, floor_name, hub_device_info)
         )
 
     # Per-area presence sensors (one per HA area)
-    from homeassistant.helpers import area_registry as ar
-
-    area_reg = ar.async_get(hass)
-    for area in area_reg.areas.values():
-        device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_area_{area.id}")},
-            name=f"WiFiSense — {area.name}",
-            manufacturer=MANUFACTURER,
-            model=MODEL,
-        )
+    for area in get_all_areas(hass):
         entities.append(
-            PresenceBinarySensor(coordinator, entry, area.id, area.name, device_info)
+            PresenceBinarySensor(coordinator, entry, area.id, area.name, hub_device_info)
         )
 
     async_add_entities(entities)
@@ -108,12 +111,11 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
     """Fused WiFi presence indicator for an HA area.
 
     Presence is considered active if ANY of the following are true:
-      a) At least one router client is associated to an AP in this area or assigned to this area.
-      b) At least one CSI node in this area reports motion detected = True.
+      a) A localized person is currently located in this area and marked home.
+      b) At least one router client is associated to an AP in this area or assigned to this area.
+      c) At least one CSI node in this area reports motion detected = True.
 
     This fused approach reduces false negatives from single-source failures.
-    Note: WiFi presence tracks devices, not people directly. A person
-    carrying a phone is tracked; a person without a WiFi device is not.
     """
 
     _attr_device_class = BinarySensorDeviceClass.PRESENCE
@@ -130,14 +132,22 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
         super().__init__(coordinator, entry, f"presence_{area_id}", device_info)
         self._area_id = area_id
         self._area_name = area_name
-        self._attr_name = "Presence"
+        self._attr_name = f"Presence {area_name}"
+        self._attr_suggested_area = area_name
 
     @property
     def is_on(self) -> bool:
         """Return True if presence is detected in this area."""
         data = self.coordinator.data or {}
 
-        # Source A: router client in this area
+        # Source A: localized person in this area
+        engine = getattr(self.coordinator, "localization_engine", None)
+        trackers = engine.trackers if engine else {}
+        for tracker in trackers.values():
+            if tracker.state.current_area_id == self._area_id and tracker.state.is_home:
+                return True
+
+        # Source B: router client in this area
         clients = data.get("router_clients", {})
         ap_stats = data.get("ap_stats", {})
         area_ap_macs = {
@@ -149,7 +159,7 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
         ):
             return True
 
-        # Source B: CSI motion detected in this area
+        # Source C: CSI motion detected in this area
         csi_nodes = data.get("csi_nodes", [])
         for node in csi_nodes:
             if node.area_id == self._area_id and getattr(
@@ -176,8 +186,25 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
             if (c.ap_mac in area_ap_macs or c.area_id == self._area_id)
         ]
 
+        engine = getattr(self.coordinator, "localization_engine", None)
+        trackers = engine.trackers if engine else {}
+        occupants = [
+            tracker.person_name
+            for tracker in trackers.values()
+            if tracker.state.current_area_id == self._area_id and tracker.state.is_home
+        ]
+
         devices_detail = []
-        distances = []
+        distances: list[float] = []
+
+        for tracker in trackers.values():
+            if (
+                tracker.state.current_area_id == self._area_id
+                and tracker.state.is_home
+                and tracker.state.distance_m is not None
+            ):
+                distances.append(tracker.state.distance_m)
+
         for c in area_clients[:10]:
             dist = estimate_distance_from_rssi(c.rssi)
             if dist is not None:
@@ -195,6 +222,8 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
 
         return {
             "area_id": self._area_id,
+            "occupants": occupants,
+            "occupant_count": len(occupants),
             "device_count": len(area_clients),
             "devices": [c.hostname or c.mac for c in area_clients[:10]],
             "devices_detail": devices_detail,
@@ -204,21 +233,7 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
 
 
 class ObjectAnomalyBinarySensor(WiFiSenseBaseBinary):
-    """Fires when spatial anomaly score exceeds the configured threshold.
-
-    This sensor indicates that the WiFi signal pattern on a floor has
-    changed significantly from the learned baseline, which may indicate:
-      - New furniture or objects placed in a room.
-      - Existing furniture moved.
-      - Structural changes (doors/windows left open, etc.).
-      - Unusual occupancy patterns.
-
-    Important: This is a statistical detector, not computer vision.
-    Expect occasional false positives, especially:
-      - During baseline learning phase (first 100+ samples).
-      - After network equipment changes (new AP, channel switch).
-      - During high mesh roaming activity.
-    """
+    """Fires when spatial anomaly score exceeds the configured threshold."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_icon = "mdi:alert-outline"
@@ -235,7 +250,7 @@ class ObjectAnomalyBinarySensor(WiFiSenseBaseBinary):
         super().__init__(coordinator, entry, f"anomaly_binary_{floor_id}", device_info)
         self._floor_id = floor_id
         self._threshold = threshold
-        self._attr_name = "Object Anomaly"
+        self._attr_name = f"Object Anomaly {floor_name}"
 
     @property
     def is_on(self) -> bool:
@@ -264,12 +279,7 @@ class ObjectAnomalyBinarySensor(WiFiSenseBaseBinary):
 
 
 class CSIMotionBinarySensor(WiFiSenseBaseBinary):
-    """Aggregated CSI motion detection across all nodes on a floor.
-
-    Returns True if ANY CSI node on the floor reports motion detected.
-    Multi-node AND logic (requiring all nodes to agree) is too conservative
-    for typical home sensor densities; OR logic is preferred.
-    """
+    """Aggregated CSI motion detection across all nodes on a floor."""
 
     _attr_device_class = BinarySensorDeviceClass.MOTION
     _attr_icon = "mdi:motion-sensor"
@@ -284,7 +294,7 @@ class CSIMotionBinarySensor(WiFiSenseBaseBinary):
     ) -> None:
         super().__init__(coordinator, entry, f"csi_motion_{floor_id}", device_info)
         self._floor_id = floor_id
-        self._attr_name = "CSI Motion"
+        self._attr_name = f"CSI Motion {floor_name}"
 
     @property
     def is_on(self) -> bool:

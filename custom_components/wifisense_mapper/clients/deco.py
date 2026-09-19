@@ -535,36 +535,39 @@ class DecoClient(RouterClient):
         node_map: dict[str, str] = {}
         from homeassistant.helpers import device_registry as dr
 
+        from ..registry_helpers import get_device_entries
+
         dev_reg = dr.async_get(self._hass)
-        devices = (
-            dev_reg.devices.values()
-            if hasattr(dev_reg.devices, "values")
-            else dev_reg.devices
-        )
+        devices = get_device_entries(dev_reg)
 
         for dev in devices:
-            if isinstance(dev, str):
-                continue
-
-            # Check if this device is from tplink_deco
+            # Check if this device is specifically a Deco mesh unit
             is_deco = any(
-                domain == "tplink_deco" or domain == "tplink"
+                domain == "tplink_deco"
                 for domain, _ in dev.identifiers
+            ) or (
+                dev.model is not None and "deco" in dev.model.lower()
+            ) or (
+                dev.name is not None and "deco" in dev.name.lower()
             )
-            if not is_deco and not (dev.manufacturer and "tp-link" in dev.manufacturer.lower()):
+            if not is_deco:
                 continue
 
             # Extract MAC from connections or identifiers
             dev_mac = ""
             for conn in dev.connections:
-                if len(conn) >= 2 and (str(conn[1]).count(":") >= 5 or str(conn[1]).count("-") >= 5):
-                    dev_mac = self.normalize_mac(str(conn[1]))
-                    break
+                if len(conn) >= 2:
+                    norm = self.normalize_mac(str(conn[1]))
+                    if norm:
+                        dev_mac = norm
+                        break
             if not dev_mac:
                 for ident in dev.identifiers:
-                    if len(ident) >= 2 and (str(ident[1]).count(":") >= 5 or str(ident[1]).count("-") >= 5):
-                        dev_mac = self.normalize_mac(str(ident[1]))
-                        break
+                    if len(ident) >= 2:
+                        norm = self.normalize_mac(str(ident[1]))
+                        if norm:
+                            dev_mac = norm
+                            break
 
             if dev_mac:
                 node_map[dev_mac] = dev_mac
@@ -584,11 +587,13 @@ class DecoClient(RouterClient):
 
         from homeassistant.helpers import entity_registry as er
 
+        from ..registry_helpers import get_entity_entries
+
         ent_reg = er.async_get(self._hass)
         node_map = self._get_ha_deco_node_map()
         result: dict[str, ClientInfo] = {}
 
-        for entry in ent_reg.entities.values():
+        for entry in get_entity_entries(ent_reg):
             if entry.domain != "device_tracker" or entry.platform != "tplink_deco":
                 continue
 
@@ -637,6 +642,11 @@ class DecoClient(RouterClient):
                     norm_ap = self.normalize_mac(ap_str)
                     if norm_ap:
                         ap_mac = norm_ap
+                    else:
+                        for n_name, n_mac in node_map.items():
+                            if n_name in ap_str.lower() or ap_str.lower() in n_name:
+                                ap_mac = n_mac
+                                break
 
             band = attrs.get("connection_type") or attrs.get("band") or attrs.get("interface")
             if band:
@@ -684,12 +694,10 @@ class DecoClient(RouterClient):
 
         from homeassistant.helpers import device_registry as dr
 
+        from ..registry_helpers import get_device_entries
+
         dev_reg = dr.async_get(self._hass)
-        devices = (
-            dev_reg.devices.values()
-            if hasattr(dev_reg.devices, "values")
-            else dev_reg.devices
-        )
+        devices = get_device_entries(dev_reg)
         clients = self._get_clients_from_ha_bridge()
 
         client_counts: dict[str, int] = {}
@@ -697,37 +705,52 @@ class DecoClient(RouterClient):
             if c.ap_mac:
                 client_counts[c.ap_mac] = client_counts.get(c.ap_mac, 0) + 1
 
+        seen_macs: set[str] = set()
+        seen_names: set[str] = set()
         ap_stats_list: list[APStats] = []
         for dev in devices:
-            if isinstance(dev, str):
-                continue
-
             is_deco = any(
-                domain == "tplink_deco" or domain == "tplink"
+                domain == "tplink_deco"
                 for domain, _ in dev.identifiers
+            ) or (
+                dev.model is not None and "deco" in dev.model.lower()
+            ) or (
+                dev.name is not None and "deco" in dev.name.lower()
             )
-            if not is_deco and not (dev.manufacturer and "tp-link" in dev.manufacturer.lower()):
+            if not is_deco:
                 continue
 
             dev_mac = ""
             for conn in dev.connections:
-                if len(conn) >= 2 and (str(conn[1]).count(":") >= 5 or str(conn[1]).count("-") >= 5):
-                    dev_mac = self.normalize_mac(str(conn[1]))
-                    break
+                if len(conn) >= 2:
+                    norm = self.normalize_mac(str(conn[1]))
+                    if norm:
+                        dev_mac = norm
+                        break
             if not dev_mac:
                 for ident in dev.identifiers:
-                    if len(ident) >= 2 and (str(ident[1]).count(":") >= 5 or str(ident[1]).count("-") >= 5):
-                        dev_mac = self.normalize_mac(str(ident[1]))
-                        break
+                    if len(ident) >= 2:
+                        norm = self.normalize_mac(str(ident[1]))
+                        if norm:
+                            dev_mac = norm
+                            break
 
-            if not dev_mac:
+            if not dev_mac or dev_mac in seen_macs:
                 continue
+
+            clean_name = (dev.name_by_user or dev.name or f"Deco {dev_mac[-5:]}").strip()
+            name_key = clean_name.lower()
+            if name_key in seen_names:
+                # Same name AP already seen; avoid duplicate AP devices for multi-interface units
+                continue
+            seen_macs.add(dev_mac)
+            seen_names.add(name_key)
 
             count = client_counts.get(dev_mac, 0)
             ap_stats_list.append(
                 APStats(
                     mac=dev_mac,
-                    name=dev.name_by_user or dev.name or f"Deco {dev_mac[-5:]}",
+                    name=clean_name,
                     area_id=dev.area_id,
                     client_count=count,
                     extra={

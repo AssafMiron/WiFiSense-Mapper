@@ -36,6 +36,33 @@ STANDBY_DECAY_START_S = 45.0
 STANDBY_MAX_AGE_S = 600.0  # 10 minutes
 
 
+def calculate_distance_from_rssi(
+    rssi: float | None,
+    band: str | None = None,
+    tx_power: float | None = None,
+    path_loss_n: float = 2.4,
+) -> float | None:
+    """Calculate distance in meters using IEEE/ITU-R log-distance path loss model.
+
+    d = 10 ^ ((tx_power - rssi) / (10 * n))
+    """
+    if rssi is None or float(rssi) >= 0:
+        return None
+    ref_power = tx_power
+    if ref_power is None:
+        if band and "2" in str(band):
+            ref_power = -40.0
+            path_loss_n = 2.2
+        else:
+            ref_power = -42.0
+            path_loss_n = 2.4
+    try:
+        val = 10.0 ** ((ref_power - float(rssi)) / (10.0 * path_loss_n))
+        return round(max(0.1, min(val, 50.0)), 1)
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 @dataclass
 class MicroZone:
     """A configured furniture or sub-room micro zone."""
@@ -172,7 +199,11 @@ class PersonTrackingState:
     last_seen_ts: float = field(default_factory=time.time)
     last_area_name: str | None = None
     ap_mac: str | None = None
+    connected_ap_name: str | None = None
+    band: str | None = None
     rssi: int | None = None
+    distance_m: float | None = None
+    distances_to_aps: dict[str, float] = field(default_factory=dict)
     speed_mps: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -196,7 +227,11 @@ class PersonTrackingState:
             "last_seen_ts": self.last_seen_ts,
             "last_area_name": self.last_area_name,
             "ap_mac": self.ap_mac,
+            "connected_ap_name": self.connected_ap_name,
+            "band": self.band,
             "rssi": self.rssi,
+            "distance_m": self.distance_m,
+            "distances_to_aps": self.distances_to_aps,
             "speed_mps": round(self.speed_mps, 2),
         }
 
@@ -221,6 +256,7 @@ class PersonTracker:
         self.last_area_name: str | None = None
         self.area_enter_ts: float = time.time()
         self.last_floor_change_ts: float = 0.0
+        self.smoothed_distance: float | None = None
 
         self.latest_state = PersonTrackingState(
             mac=self.mac,
@@ -232,6 +268,8 @@ class PersonTracker:
         self,
         *,
         ap_mac: str | None,
+        ap_name: str | None = None,
+        band: str | None = None,
         rssi: int | None,
         floor_id: str,
         floor_name: str,
@@ -242,12 +280,15 @@ class PersonTracker:
         grid_height_m: float,
         csi_motion_score: float = 0.0,
         micro_zones: list[MicroZone] | None = None,
+        is_connected: bool = True,
+        ap_distances: dict[str, float] | None = None,
         now_ts: float | None = None,
     ) -> PersonTrackingState:
         """Update tracker with fresh telemetry."""
         now = now_ts if now_ts is not None else time.time()
 
-        if ap_mac is None:
+        # Check if device is completely offline/disconnected or in standby
+        if (not is_connected) or (ap_mac is None and rssi is None):
             # Device not reporting / away or asleep
             if area_name and area_name != "Unknown Room" and self.latest_state.area_name == "Unknown Room":
                 self.latest_state.area_name = area_name
@@ -260,6 +301,7 @@ class PersonTracker:
             if age > STANDBY_MAX_AGE_S:
                 self.latest_state.activity = STATE_AWAY
                 self.latest_state.confidence = 0.0
+                self.latest_state.distance_m = None
             else:
                 # Decaying confidence, hold last location
                 decay_factor = max(
@@ -268,17 +310,30 @@ class PersonTracker:
                     - (age - STANDBY_DECAY_START_S)
                     / (STANDBY_MAX_AGE_S - STANDBY_DECAY_START_S),
                 )
-                # Boost if CSI motion is active in current area
                 if csi_motion_score > CSI_MOTION_MOVEMENT_THRESHOLD:
                     decay_factor = min(1.0, decay_factor + 0.3)
                 self.latest_state.confidence = round(max(0.1, decay_factor), 2)
                 self.latest_state.activity = STATE_STATIONARY
             return self.latest_state
 
-        # Update last seen
+        # Update last seen and signal telemetry
         self.latest_state.last_seen_ts = now
         self.latest_state.rssi = rssi
         self.latest_state.ap_mac = ap_mac
+        self.latest_state.connected_ap_name = ap_name
+        self.latest_state.band = band
+
+        # Calculate real physical distance from connected Deco hub using path loss model
+        if rssi is not None:
+            dist = calculate_distance_from_rssi(rssi, band=band)
+            if dist is not None:
+                if self.smoothed_distance is None:
+                    self.smoothed_distance = dist
+                else:
+                    self.smoothed_distance = round(0.35 * dist + 0.65 * self.smoothed_distance, 1)
+                self.latest_state.distance_m = self.smoothed_distance
+        if ap_distances:
+            self.latest_state.distances_to_aps = dict(ap_distances)
 
         # 1. Floor Transition Feasibility Guard
         if floor_id != self.current_floor:
@@ -287,7 +342,6 @@ class PersonTracker:
                 self.last_floor_change_ts > 0
                 and elapsed_since_last_floor < MIN_FLOOR_TRANSITION_TIME_S
             ):
-                # Feasibility violation (too fast vertical hop without transition time)
                 floor_id = self.current_floor
             else:
                 self.current_floor = floor_id
@@ -300,14 +354,11 @@ class PersonTracker:
         if ap_pos_m is not None:
             raw_x, raw_y = ap_pos_m
             if rssi is not None:
-                # Simple path loss offset approximation: ~1m per 5 dB drop below -40 dBm
-                dist_est = max(0.0, (-40 - rssi) / 10.0)
-                # Add minor deterministic angle dispersion based on MAC
+                dist_est = self.smoothed_distance if self.smoothed_distance is not None else max(0.0, (-40 - rssi) / 10.0)
                 angle = (int(self.mac.replace(":", "")[-2:], 16) % 360) * (math.pi / 180.0)
                 target_x = max(0.0, min(grid_width_m, raw_x + dist_est * math.cos(angle)))
                 target_y = max(0.0, min(grid_height_m, raw_y + dist_est * math.sin(angle)))
             else:
-                # Coarse signal: center around the AP with slight dispersion
                 angle = (int(self.mac.replace(":", "")[-2:], 16) % 360) * (math.pi / 180.0)
                 target_x = max(0.0, min(grid_width_m, raw_x + 0.5 * math.cos(angle)))
                 target_y = max(0.0, min(grid_height_m, raw_y + 0.5 * math.sin(angle)))
@@ -327,14 +378,15 @@ class PersonTracker:
         self.latest_state.y_pct = (smooth_y / max(1.0, grid_height_m)) * 100.0
 
         # 4. Area & Dwell Time Calculation
+        effective_area = area_name if (area_name and area_name != "Unknown Room") else (self.current_area_name or "Home")
         if self.current_area_name is None:
-            self.current_area_name = area_name
+            self.current_area_name = effective_area
             self.current_area_id = area_id
             self.area_enter_ts = now
             self.latest_state.dwell_time_s = 0.0
-        elif area_name != self.current_area_name:
+        elif effective_area != self.current_area_name:
             self.last_area_name = self.current_area_name
-            self.current_area_name = area_name
+            self.current_area_name = effective_area
             self.current_area_id = area_id
             self.area_enter_ts = now
             self.latest_state.dwell_time_s = 0.0
@@ -362,7 +414,7 @@ class PersonTracker:
         else:
             self.latest_state.activity = STATE_STATIONARY
 
-        self.latest_state.confidence = 1.0 if ap_pos_m is not None else 0.7
+        self.latest_state.confidence = 1.0 if ap_pos_m is not None else 0.8
         return self.latest_state
 
 

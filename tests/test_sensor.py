@@ -145,3 +145,99 @@ class TestAnomalyScoreSensor:
         assert "floor_id" in attrs
         assert "baseline_warmed_up" in attrs
         assert attrs["baseline_warmed_up"] is False
+
+
+class TestWifiSensePersonDistanceSensor:
+    def test_person_distance_sensor_metrics_and_attributes(
+        self, mock_config_entry_no_router
+    ):
+        from custom_components.wifisense_mapper.engine.localization import (
+            PersonTracker,
+        )
+        from custom_components.wifisense_mapper.sensor import (
+            WifiSensePersonDistanceSensor,
+        )
+
+        coord = _make_coordinator(mock_config_entry_no_router)
+        tracker = PersonTracker(
+            mac="aa:bb:cc:dd:ee:01",
+            person_entity_id="person.assaf",
+            person_name="Assaf",
+        )
+        tracker.latest_state.distance_m = 2.8
+        tracker.latest_state.connected_ap_name = "Office Deco"
+        tracker.latest_state.band = "5GHz"
+        tracker.latest_state.area_name = "Office"
+        tracker.latest_state.activity = "Stationary / Sitting"
+        tracker.latest_state.confidence = 1.0
+        tracker.latest_state.distances_to_aps = {
+            "Office Deco": 2.8,
+            "Dining Room Deco": 6.4,
+        }
+
+        coord.localization_engine = MagicMock()
+        coord.localization_engine.trackers = {tracker.mac: tracker}
+        coord.data["person_tracking"] = {tracker.mac: tracker.latest_state}
+
+        sensor = WifiSensePersonDistanceSensor(
+            coord,
+            mock_config_entry_no_router,
+            tracker.mac,
+            "Assaf",
+            MagicMock(),
+        )
+
+        assert sensor.native_value == 2.8
+        assert sensor.native_unit_of_measurement == "m"
+        attrs = sensor.extra_state_attributes
+        assert attrs["connected_ap"] == "Office Deco"
+        assert attrs["band"] == "5GHz"
+        assert attrs["room"] == "Office"
+        assert attrs["all_deco_distances"]["Dining Room Deco"] == 6.4
+
+
+class TestCalculateDistanceFromRssi:
+    def test_valid_distance_calculation(self):
+        from custom_components.wifisense_mapper.engine.localization import (
+            calculate_distance_from_rssi,
+        )
+
+        # High signal (-42 dBm on 5GHz) -> ~1.0m
+        d1 = calculate_distance_from_rssi(-42, band="5GHz")
+        assert d1 is not None
+        assert pytest.approx(d1, abs=0.2) == 1.0
+
+        # Weak signal (-75 dBm on 2.4GHz) -> ~30-40m
+        d2 = calculate_distance_from_rssi(-75, band="2.4GHz")
+        assert d2 is not None
+        assert 15.0 < d2 <= 50.0
+
+        # Invalid/positive RSSI
+        assert calculate_distance_from_rssi(0) is None
+        assert calculate_distance_from_rssi(10) is None
+        assert calculate_distance_from_rssi(None) is None
+
+
+class TestMultiApMeshCoverageSensor:
+    def test_area_coverage_multi_ap_mesh_states(self, mock_config_entry_no_router):
+        from custom_components.wifisense_mapper.sensor import AreaCoverageSensor
+
+        coord = _make_coordinator(mock_config_entry_no_router)
+        coord.data["coverage"] = {
+            "cross_covered_area_ids": ["hallway"],
+            "covered_area_ids": ["basement"],
+            "area_ap_map": {"office": ["Office Deco"]},
+        }
+
+        sensor = AreaCoverageSensor(
+            coord,
+            mock_config_entry_no_router,
+            "hallway",
+            "Hallway",
+            MagicMock(),
+        )
+        assert sensor.native_value == "Mesh Cross-Covered"
+        attrs = sensor.extra_state_attributes
+        assert attrs["area_id"] == "hallway"
+        assert attrs["status"] == "Mesh Cross-Covered"
+

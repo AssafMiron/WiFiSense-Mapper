@@ -29,6 +29,7 @@ from .const import (
     ROUTER_TYPE_NONE,
     ROUTER_TYPE_UNIFI,
 )
+from .registry_helpers import get_device_entries
 from .router_discovery import (
     DiscoveredRouter,
     discover_all_routers,
@@ -403,11 +404,12 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         ap_list = self._get_known_aps()
 
         if user_input is not None:
-            from .registry_helpers import async_sync_device_area
+            from .registry_helpers import async_sync_device_area, get_floor_for_area
 
             overwrite_ha = user_input.get("overwrite_ha_device_areas", False)
             current["overwrite_ha_device_areas"] = overwrite_ha
             updated_map = dict(current_node_areas)
+            updated_floor_map: dict[str, str] = dict(current.get("node_floor_map", {}))
             for mac, label in ap_list.items():
                 val = (
                     user_input.get(label)
@@ -416,15 +418,34 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 )
                 if val:
                     updated_map[mac] = val
+                    floor = get_floor_for_area(self.hass, val)
+                    if floor:
+                        updated_floor_map[mac] = floor.floor_id
                     async_sync_device_area(self.hass, mac, val, overwrite=overwrite_ha)
                 elif mac in updated_map:
                     updated_map.pop(mac)
+                    updated_floor_map.pop(mac, None)
             current["node_area_map"] = updated_map
+            current["node_floor_map"] = updated_floor_map
             return self.async_create_entry(title="", data=current)
+
+        from .registry_helpers import auto_link_ap_to_ha_device
 
         schema_dict: dict[Any, Any] = {}
         for mac, label in ap_list.items():
             default_area = current_node_areas.get(mac, "")
+            if not default_area:
+                coord = (
+                    self.hass.data.get(DOMAIN, {})
+                    .get(self.config_entry.entry_id, {})
+                    .get("coordinator")
+                )
+                if coord and mac in coord.ap_stats and coord.ap_stats[mac].area_id:
+                    default_area = coord.ap_stats[mac].area_id
+                else:
+                    auto_area, _ = auto_link_ap_to_ha_device(self.hass, mac)
+                    if auto_area:
+                        default_area = auto_area
             schema_dict[vol.Optional(label, default=default_area)] = vol.In(
                 area_options
             )
@@ -576,14 +597,13 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         from homeassistant.helpers import device_registry as dr
 
         from .clients.base import RouterClient
+        from .registry_helpers import get_device_entries
 
         dev_reg = dr.async_get(self.hass)
         mac_to_dev_name: dict[str, str] = {}
 
-        devices = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
+        devices = get_device_entries(dev_reg)
         for device in devices:
-            if isinstance(device, str):
-                continue
             dev_name = device.name_by_user or device.name or device.model
             if not dev_name:
                 continue
@@ -703,10 +723,8 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
 
         # 3. Discover network client devices from Device Registry
         dev_reg = dr.async_get(self.hass)
-        dev_list = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
+        dev_list = get_device_entries(dev_reg)
         for device in dev_list:
-            if isinstance(device, str):
-                continue
             dev_name = device.name_by_user or device.name or device.model
             if not dev_name:
                 continue

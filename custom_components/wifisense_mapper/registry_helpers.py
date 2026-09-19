@@ -14,14 +14,58 @@ from __future__ import annotations
 
 import logging
 from difflib import SequenceMatcher
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.area_registry import AreaEntry
+    from homeassistant.helpers.device_registry import DeviceEntry
+    from homeassistant.helpers.entity_registry import RegistryEntry
     from homeassistant.helpers.floor_registry import FloorEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def get_device_entries(dev_reg: Any) -> list[DeviceEntry]:
+    """Return all device entries from the device registry without deprecation warnings."""
+    raw_devices = getattr(dev_reg, "devices", None)
+    if raw_devices is None:
+        return []
+    if isinstance(raw_devices, dict):
+        return list(raw_devices.values())
+    if isinstance(raw_devices, list):
+        return list(raw_devices)
+
+    entries: list[DeviceEntry] = []
+    for item in raw_devices:
+        if isinstance(item, str):
+            entry = dev_reg.async_get(item) if hasattr(dev_reg, "async_get") else None
+            if entry is not None:
+                entries.append(entry)
+        elif item is not None:
+            entries.append(item)
+    return entries
+
+
+def get_entity_entries(ent_reg: Any) -> list[RegistryEntry]:
+    """Return all entity entries from the entity registry without deprecation warnings."""
+    raw_entities = getattr(ent_reg, "entities", None)
+    if raw_entities is None:
+        return []
+    if isinstance(raw_entities, dict):
+        return list(raw_entities.values())
+    if isinstance(raw_entities, list):
+        return list(raw_entities)
+
+    entries: list[RegistryEntry] = []
+    for item in raw_entities:
+        if isinstance(item, str):
+            entry = ent_reg.async_get(item) if hasattr(ent_reg, "async_get") else None
+            if entry is not None:
+                entries.append(entry)
+        elif item is not None:
+            entries.append(item)
+    return entries
 
 
 def get_all_floors(hass: HomeAssistant) -> list[FloorEntry]:
@@ -180,10 +224,8 @@ def auto_link_ap_to_ha_device(
     norm_mac = str(ap_mac).lower().replace("-", ":").replace(".", ":")
     matched_device: dr.DeviceEntry | None = None
 
-    devices = dev_reg.devices.values() if hasattr(dev_reg.devices, "values") else dev_reg.devices  # type: ignore[union-attr]
+    devices = get_device_entries(dev_reg)
     for device in devices:
-        if isinstance(device, str):
-            continue
         # Check connections
         for conn in device.connections:
             if len(conn) >= 2:
@@ -259,14 +301,8 @@ def async_sync_device_area(
     dev_reg = dr.async_get(hass)
     norm_mac = str(ap_mac).lower().replace("-", ":").replace(".", ":")
 
-    devices = (
-        dev_reg.devices.values()
-        if hasattr(dev_reg.devices, "values")
-        else dev_reg.devices
-    )
+    devices = get_device_entries(dev_reg)
     for device in devices:
-        if isinstance(device, str):
-            continue
         matched = False
         for conn in device.connections:
             if (

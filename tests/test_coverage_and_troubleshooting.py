@@ -192,7 +192,7 @@ async def test_device_tracker_instantiates_directly_from_person_tags(
     assert len(added_entities) == 1
     tracker = added_entities[0]
     assert tracker._mac == "b0:a7:b9:bb:11:22"
-    assert tracker.device_info["name"] == "John Phone"
+    assert tracker.device_info["name"] == "WiFiSense — John Phone"
 
 
 @pytest.mark.asyncio

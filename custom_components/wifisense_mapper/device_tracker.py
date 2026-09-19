@@ -53,6 +53,8 @@ async def async_setup_entry(
     from homeassistant.helpers import entity_registry as er
 
     from .const import CONF_PERSON_TAGS
+    from .registry_helpers import get_device_entries
+    from .sensor import _person_device_info
 
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
@@ -64,7 +66,7 @@ async def async_setup_entry(
         if pm not in tracked_macs:
             tracked_macs.append(pm)
 
-    # 1. Automatically prune previously registered trackers and devices that are no longer wanted
+    # 1. Automatically prune previously registered tracker entities that are no longer wanted
     existing_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
     for entity_entry in existing_entries:
         if entity_entry.domain == "device_tracker" and entity_entry.unique_id.startswith(
@@ -79,17 +81,17 @@ async def async_setup_entry(
                 )
                 ent_reg.async_remove(entity_entry.entity_id)
 
-    for dev in list(dev_reg.devices.values()):
+    # 2. Migrate and remove legacy separate device entries so tracker entities attach to the unified person device
+    devices = get_device_entries(dev_reg)
+    for dev in devices:
         for ident in dev.identifiers:
             if ident[0] == DOMAIN and ident[1].startswith(f"{entry.entry_id}_tracker_"):
-                mac = ident[1].replace(f"{entry.entry_id}_tracker_", "")
-                if not track_all and mac not in tracked_macs:
-                    _LOGGER.info(
-                        "Auto-removing unwanted device registry entry for: %s",
-                        dev.name or mac,
-                    )
-                    dev_reg.async_remove_device(dev.id)
-                    break
+                _LOGGER.info(
+                    "Migrating/removing legacy separate device tracker entry: %s",
+                    dev.name or ident[1],
+                )
+                dev_reg.async_remove_device(dev.id)
+                break
 
     if not track_all and not tracked_macs:
         _LOGGER.debug(
@@ -97,17 +99,17 @@ async def async_setup_entry(
         )
         return
 
-
-    # Create trackers for clients: first all explicitly tracked MACs (including person tags)
+    # Create trackers for clients: unified with person sensors when tagged
     entities: list[TrackerEntity] = []
     seen_macs: set[str] = set()
 
     for mac in tracked_macs:
-        if mac in seen_macs:
+        norm_mac = mac.lower().replace("-", ":").replace(".", ":")
+        if norm_mac in seen_macs:
             continue
-        seen_macs.add(mac)
-        client = coordinator.router_clients.get(mac)
-        tag_data = person_tags.get(mac)
+        seen_macs.add(norm_mac)
+        client = coordinator.router_clients.get(norm_mac) or coordinator.router_clients.get(mac)
+        tag_data = person_tags.get(mac) or person_tags.get(norm_mac)
         person_name = (
             tag_data.get("person_name")
             if isinstance(tag_data, dict)
@@ -115,32 +117,32 @@ async def async_setup_entry(
             if isinstance(tag_data, str)
             else None
         )
-        display_name = (
-            person_name
-            or (client.hostname if client else None)
-            or f"Device {mac}"
-        )
-        device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_tracker_{mac}")},
-            name=display_name,
-            manufacturer=MANUFACTURER,
-            model="WiFi Client / Person Tracker",
-        )
-        entities.append(WifiSenseDeviceTracker(coordinator, entry, mac, device_info))
+        label = client.hostname if client and client.hostname else None
+        if person_name:
+            device_info = _person_device_info(entry, norm_mac, person_name, device_label=label)
+        else:
+            device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"{entry.entry_id}_client_{norm_mac}")},
+                name=f"WiFiSense — {label or f'Device {norm_mac[-5:]}'}",
+                manufacturer=MANUFACTURER,
+                model="WiFi Client Tracker",
+            )
+        entities.append(WifiSenseDeviceTracker(coordinator, entry, norm_mac, device_info))
 
     # If track_all is True, add any remaining discovered router clients
     if track_all:
         for mac, client in list(coordinator.router_clients.items())[:MAX_TRACKED_DEVICES]:
-            if mac in seen_macs:
+            norm_mac = mac.lower().replace("-", ":").replace(".", ":")
+            if norm_mac in seen_macs:
                 continue
-            seen_macs.add(mac)
+            seen_macs.add(norm_mac)
             device_info = DeviceInfo(
-                identifiers={(DOMAIN, f"{entry.entry_id}_tracker_{mac}")},
-                name=client.hostname or f"Device {mac}",
+                identifiers={(DOMAIN, f"{entry.entry_id}_client_{norm_mac}")},
+                name=f"WiFiSense — {client.hostname or f'Device {norm_mac[-5:]}'}",
                 manufacturer=MANUFACTURER,
-                model="WiFi Client",
+                model="WiFi Client Tracker",
             )
-            entities.append(WifiSenseDeviceTracker(coordinator, entry, mac, device_info))
+            entities.append(WifiSenseDeviceTracker(coordinator, entry, norm_mac, device_info))
 
     if entities:
         async_add_entities(entities)

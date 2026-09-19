@@ -18,7 +18,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+from homeassistant.const import SIGNAL_STRENGTH_DECIBELS_MILLIWATT, UnitOfLength
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -37,10 +37,14 @@ async def async_setup_entry(
 ) -> None:
     """Set up sensor entities from config entry."""
     coordinator: WiFiSenseCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    from homeassistant.helpers import device_registry as dr
+
+    from .registry_helpers import get_all_areas, get_device_entries
 
     entities: list[SensorEntity] = []
 
-    # Main integration hub device info
+    # Main integration hub device info (Service Hub)
+    # Area coverage and floor-level sensors attach directly here to prevent device proliferation.
     hub_device_info = DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
         name="WiFiSense Mapper",
@@ -54,7 +58,9 @@ async def async_setup_entry(
     trackers = coordinator.localization_engine.trackers
     for mac, tracker in trackers.items():
         person_name = tracker.person_name
-        person_dev_info = _person_device_info(entry, mac, person_name)
+        client = coordinator.router_clients.get(mac)
+        label = client.hostname if client and client.hostname else None
+        person_dev_info = _person_device_info(entry, mac, person_name, device_label=label)
         entities.append(
             WifiSensePersonLocationSensor(
                 coordinator, entry, mac, person_name, person_dev_info
@@ -70,32 +76,26 @@ async def async_setup_entry(
                 coordinator, entry, mac, person_name, person_dev_info
             )
         )
-
-    # Per-area coverage sensors
-    from .registry_helpers import get_all_areas
-
-    for area in get_all_areas(hass):
-        area_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_area_{area.id}")},
-            name=f"WiFiSense — {area.name}",
-            manufacturer=MANUFACTURER,
-            model="Area Coverage",
-            entry_type=DeviceEntryType.SERVICE,
-        )
         entities.append(
-            AreaCoverageSensor(coordinator, entry, area.id, area.name, area_device_info)
+            WifiSensePersonDistanceSensor(
+                coordinator, entry, mac, person_name, person_dev_info
+            )
         )
 
-    # Per-floor sensors
+    # Per-area coverage sensors (attached to Main Service Hub)
+    for area in get_all_areas(hass):
+        entities.append(
+            AreaCoverageSensor(coordinator, entry, area.id, area.name, hub_device_info)
+        )
+
+    # Per-floor sensors (attached to Main Service Hub)
     for floor_id in coordinator.grids:
         floor_name = _get_floor_name(hass, floor_id)
-        device_info = _floor_device_info(entry, floor_id, floor_name)
-
         entities.append(
-            AnomalyScoreSensor(coordinator, entry, floor_id, floor_name, device_info)
+            AnomalyScoreSensor(coordinator, entry, floor_id, floor_name, hub_device_info)
         )
         entities.append(
-            WifiClientCountSensor(coordinator, entry, floor_id, floor_name, device_info)
+            WifiClientCountSensor(coordinator, entry, floor_id, floor_name, hub_device_info)
         )
 
     # Per-CSI-node sensors
@@ -104,12 +104,33 @@ async def async_setup_entry(
             device_info = _node_device_info(entry, node.device_id, node.name)
             entities.append(CSIMotionScoreSensor(coordinator, entry, node, device_info))
 
-    # Per-AP RSSI sensors
+    # Per-AP RSSI sensors (deduplicated by MAC)
+    seen_ap_macs: set[str] = set()
     for ap_mac, ap in coordinator.ap_stats.items():
+        if ap_mac in seen_ap_macs:
+            continue
+        seen_ap_macs.add(ap_mac)
         device_info = _ap_device_info(entry, ap_mac, ap.name or ap_mac)
         entities.append(
             RSSISignalSensor(coordinator, entry, ap_mac, ap.name or ap_mac, device_info)
         )
+
+    # Clean up legacy obsolete area and floor device entries from HA Device Registry
+    dev_reg = dr.async_get(hass)
+    devices = get_device_entries(dev_reg)
+    valid_ap_idents = {f"{entry.entry_id}_ap_{m}" for m in seen_ap_macs}
+    for dev in devices:
+        for ident in dev.identifiers:
+            if ident[0] == DOMAIN:
+                if ident[1].startswith(f"{entry.entry_id}_area_"):
+                    dev_reg.async_remove_device(dev.id)
+                    break
+                if ident[1].startswith(f"{entry.entry_id}_ap_") and ident[1] not in valid_ap_idents:
+                    dev_reg.async_remove_device(dev.id)
+                    break
+                if any(ident[1] == f"{entry.entry_id}_{f}" for f in coordinator.grids):
+                    dev_reg.async_remove_device(dev.id)
+                    break
 
     async_add_entities(entities)
 
@@ -346,19 +367,23 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
         super().__init__(coordinator, entry, f"area_coverage_{area_id}", device_info)
         self._area_id = area_id
         self._area_name = area_name
-        self._attr_name = "WiFi Coverage"
+        self._attr_name = f"{area_name} WiFi Coverage"
 
     @property
     def native_value(self) -> str:
         data = self.coordinator.data or {}
         cov = data.get("coverage", {})
+        covered_ids = cov.get("covered_area_ids", [])
+        cross_covered_ids = cov.get("cross_covered_area_ids", [])
         area_ap_map = cov.get("area_ap_map", {})
-        aps = area_ap_map.get(self._area_id, [])
+        direct_aps = area_ap_map.get(self._area_id, [])
 
-        if len(aps) >= 2:
-            return "Cross-Covered"
-        if len(aps) == 1:
-            return "Covered"
+        if len(direct_aps) >= 1:
+            return "Direct AP Coverage"
+        if self._area_id in cross_covered_ids:
+            return "Mesh Cross-Covered"
+        if self._area_id in covered_ids:
+            return "Mesh Covered"
         return "Uncovered / Dead Zone"
 
     @property
@@ -366,9 +391,16 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
         data = self.coordinator.data or {}
         cov = data.get("coverage", {})
         area_ap_map = cov.get("area_ap_map", {})
-        aps = area_ap_map.get(self._area_id, [])
+        direct_aps = area_ap_map.get(self._area_id, [])
+        floor_ap_map = cov.get("floor_ap_map", {})
         ap_stats = data.get("ap_stats", {})
         clients = data.get("router_clients", {})
+
+        from .registry_helpers import get_floor_for_area
+
+        floor = get_floor_for_area(self.coordinator.hass, self._area_id)
+        floor_id = floor.floor_id if floor else None
+        floor_aps = floor_ap_map.get(floor_id, []) if floor_id else []
 
         assigned_ap_details = [
             {
@@ -376,16 +408,29 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
                 "name": getattr(ap_stats.get(mac), "name", mac),
                 "client_count": getattr(ap_stats.get(mac), "client_count", 0),
             }
-            for mac in aps
+            for mac in set(direct_aps + floor_aps)
             if mac in ap_stats
         ]
 
         client_count = sum(1 for c in clients.values() if c.area_id == self._area_id)
 
+        quality = "Poor / None"
+        if len(direct_aps) >= 1:
+            quality = "Excellent (Direct AP)"
+        elif len(floor_aps) >= 2:
+            quality = "Excellent (Mesh Overlap)"
+        elif len(floor_aps) >= 1:
+            quality = "Good (Mesh Coverage)"
+
         return {
             "area_id": self._area_id,
             "area_name": self._area_name,
-            "ap_count": len(aps),
+            "status": self.native_value,
+            "floor": floor.name if floor else floor_id,
+            "direct_ap_count": len(direct_aps),
+            "mesh_ap_count": len(floor_aps),
+            "coverage_quality": quality,
+            "cross_covered": len(direct_aps) >= 2 or len(floor_aps) >= 2,
             "assigned_aps": assigned_ap_details,
             "active_clients_in_area": client_count,
         }
@@ -519,6 +564,68 @@ class WifiSensePersonCoordinatesSensor(WiFiSenseBaseSensor):
         }
 
 
+class WifiSensePersonDistanceSensor(WiFiSenseBaseSensor):
+    """Real-time distance of tracked person from their connected Deco mesh hub."""
+
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfLength.METERS
+    _attr_icon = "mdi:map-marker-distance"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        mac: str,
+        person_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"person_distance_{mac}", device_info)
+        self._mac = mac
+        self._person_name = person_name
+        self._attr_name = "Distance"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return distance in meters."""
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state or state.activity == "Away" or state.confidence <= 0.0:
+            return None
+        return state.distance_m
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        person_tracking = (self.coordinator.data or {}).get("person_tracking", {})
+        state = person_tracking.get(self._mac)
+        if not state:
+            return {"mac": self._mac}
+
+        rssi = state.rssi
+        quality = "Unknown"
+        if rssi is not None:
+            if rssi >= -55:
+                quality = "Excellent"
+            elif rssi >= -67:
+                quality = "Good"
+            elif rssi >= -75:
+                quality = "Fair"
+            else:
+                quality = "Weak"
+
+        return {
+            "mac": self._mac,
+            "connected_ap": state.connected_ap_name or state.ap_mac or "Unknown",
+            "connected_ap_mac": state.ap_mac,
+            "rssi": state.rssi,
+            "band": state.band,
+            "signal_quality": quality,
+            "floor": state.floor_name,
+            "room": state.area_name,
+            "all_deco_distances": state.distances_to_aps,
+        }
+
+
 # ─── Device info helpers ───────────────────────────────────────────────────────
 
 
@@ -555,18 +662,28 @@ def _node_device_info(entry: ConfigEntry, device_id: str, name: str) -> DeviceIn
 
 
 def _ap_device_info(entry: ConfigEntry, ap_mac: str, ap_name: str) -> DeviceInfo:
+    norm_mac = ap_mac.lower().replace("-", ":").replace(".", ":")
     return DeviceInfo(
-        identifiers={(DOMAIN, f"{entry.entry_id}_ap_{ap_mac}")},
+        identifiers={(DOMAIN, f"{entry.entry_id}_ap_{norm_mac}")},
         name=f"WiFiSense AP — {ap_name}",
         manufacturer=MANUFACTURER,
         model="WiFi Access Point",
     )
 
 
-def _person_device_info(entry: ConfigEntry, mac: str, person_name: str) -> DeviceInfo:
+def _person_device_info(
+    entry: ConfigEntry,
+    mac: str,
+    person_name: str,
+    device_label: str | None = None,
+) -> DeviceInfo:
+    norm_mac = mac.lower().replace("-", ":").replace(".", ":")
+    display_name = f"WiFiSense — {person_name}"
+    if device_label and device_label.lower() != person_name.lower():
+        display_name = f"WiFiSense — {person_name} ({device_label})"
     return DeviceInfo(
-        identifiers={(DOMAIN, f"{entry.entry_id}_person_{mac}")},
-        name=f"WiFiSense — {person_name}",
+        identifiers={(DOMAIN, f"{entry.entry_id}_person_{norm_mac}")},
+        name=display_name,
         manufacturer=MANUFACTURER,
         model="WiFi Person Tracker",
     )

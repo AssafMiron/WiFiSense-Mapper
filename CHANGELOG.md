@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.5] - 2026-09-18
+
+### Added
+- **Physical Distance Sensor**:
+  - Added physical distance estimation sensor (`sensor.wifisense_mapper_<client>_distance`) based on WiFi signal path loss and attenuation models.
+- **Mesh Coverage Optimization**:
+  - Enhanced multi-AP mesh coverage calculations and dead zone detection.
+
+### Fixed
+- **Device Registry & Entity Minimization**:
+  - Minimized device proliferation and deduplicated entities across binary sensors, sensors, and device trackers.
+  - Improved device grouping and proper linkage with Home Assistant area and floor registries.
+- **Deco Telemetry & Localization**:
+  - Refined Deco client data normalization and AP association tracking.
+  - Enhanced localization stability and active tracking resolution.
+
+---
+
 ## [0.2.4] - 2026-09-02
 
 ### Fixed
