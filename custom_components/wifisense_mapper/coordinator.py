@@ -302,7 +302,14 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not ap.floor_id and auto_floor:
                     ap.floor_id = auto_floor
 
-            # 4. Sync area back to HA device registry
+            # 4. If floor_id is still unassigned but area_id is known, inherit from HA area
+            if ap.area_id and not ap.floor_id:
+                from .registry_helpers import get_floor_for_area
+                area_floor = get_floor_for_area(self.hass, ap.area_id)
+                if area_floor:
+                    ap.floor_id = area_floor.floor_id
+
+            # 5. Sync area back to HA device registry
             if ap.area_id:
                 async_sync_device_area(
                     self.hass,
@@ -469,22 +476,64 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _update_person_localizations(self) -> None:
         """Calculate real-time position, micro-zone, and activity for all configured person trackers."""
+        import math
+
+        from .clients.base import RouterClient
+        from .engine.localization import calculate_distance_from_rssi
         from .registry_helpers import get_area_name_from_id, get_floor_name_from_id
 
         for mac, tracker in self.localization_engine.trackers.items():
-            client = self.router_clients.get(mac)
+            norm_mac = RouterClient.normalize_mac(mac) or mac.lower()
+            client = self.router_clients.get(norm_mac) or self.router_clients.get(mac)
+
+            is_connected = False
+            if client:
+                is_connected = client.extra.get("is_home", True) if client.extra else True
+                if client.rssi is not None or client.ip is not None:
+                    is_connected = True
+
             ap_mac = client.ap_mac if client else None
             rssi = client.rssi if client else None
-            floor_id = (client and client.floor_id) or (client and self._resolve_floor_for_client(client)) or "default"
+            band = client.band if client else None
+
+            ap_obj = self.ap_stats.get(ap_mac) if ap_mac else None
+            ap_name = ap_obj.name if ap_obj else None
+
+            floor_id = (
+                (client and client.floor_id)
+                or (ap_obj and ap_obj.floor_id)
+                or (client and self._resolve_floor_for_client(client))
+                or "default"
+            )
             floor_name = get_floor_name_from_id(self.hass, floor_id)
-            area_id = client.area_id if client else None
-            area_name = get_area_name_from_id(self.hass, area_id) if area_id else "Home"
+            area_id = (client and client.area_id) or (ap_obj and ap_obj.area_id) or None
+            area_name = get_area_name_from_id(self.hass, area_id) if area_id else (tracker.current_area_name or "Home")
 
             grid = self.grids.get(floor_id) or self.grids.get("default")
             grid_w = grid.width_m if grid else 10.0
             grid_h = grid.height_m if grid else 10.0
 
             ap_pos = grid.get_ap_position_m(ap_mac) if (grid and ap_mac) else None
+
+            # Calculate distances to all known APs on this floor
+            ap_distances: dict[str, float] = {}
+            if rssi is not None and ap_name:
+                d = calculate_distance_from_rssi(rssi, band=band)
+                if d is not None:
+                    ap_distances[ap_name] = d
+
+            for other_mac, other_ap in self.ap_stats.items():
+                if other_ap.name and other_ap.name not in ap_distances:
+                    other_pos = grid.get_ap_position_m(other_mac) if grid else None
+                    if other_pos and tracker.latest_state.x_m > 0 and tracker.latest_state.y_m > 0:
+                        geom_d = round(
+                            math.hypot(
+                                tracker.latest_state.x_m - other_pos[0],
+                                tracker.latest_state.y_m - other_pos[1],
+                            ),
+                            1,
+                        )
+                        ap_distances[other_ap.name] = geom_d
 
             # Get local CSI motion score on this floor / area
             csi_score = 0.0
@@ -496,6 +545,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             tracker.update(
                 ap_mac=ap_mac,
+                ap_name=ap_name,
+                band=band,
                 rssi=rssi,
                 floor_id=floor_id,
                 floor_name=floor_name,
@@ -506,6 +557,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 grid_height_m=grid_h,
                 csi_motion_score=csi_score,
                 micro_zones=self.localization_engine.micro_zones,
+                is_connected=is_connected,
+                ap_distances=ap_distances,
             )
 
     @property
@@ -520,21 +573,42 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def get_area_coverage_summary(self) -> dict[str, Any]:
         """Compute area-level mesh coverage, cross-coverage, and dead-zones."""
-        from .registry_helpers import get_all_areas
+        from .registry_helpers import get_all_areas, get_floor_for_area
 
         all_areas = {a.id: a.name for a in get_all_areas(self.hass)}
         area_ap_map: dict[str, list[str]] = {aid: [] for aid in all_areas}
+        floor_ap_map: dict[str, list[str]] = {}
 
         for mac, ap in self.ap_stats.items():
             if ap.area_id and ap.area_id in area_ap_map:
                 area_ap_map[ap.area_id].append(mac)
+            if ap.floor_id:
+                floor_ap_map.setdefault(ap.floor_id, []).append(mac)
 
-        covered = [aid for aid, aps in area_ap_map.items() if len(aps) >= 1]
-        cross_covered = [aid for aid, aps in area_ap_map.items() if len(aps) >= 2]
-        uncovered = [aid for aid, aps in area_ap_map.items() if len(aps) == 0]
+        covered = []
+        cross_covered = []
+        uncovered = []
+
+        for aid in all_areas:
+            direct_aps = area_ap_map.get(aid, [])
+            floor = get_floor_for_area(self.hass, aid)
+            floor_id = floor.floor_id if floor else None
+            mesh_aps = floor_ap_map.get(floor_id, []) if floor_id else []
+
+            # Multi-AP mesh coverage:
+            # 1. An area is cross-covered if it has >= 2 direct APs OR its floor has >= 2 mesh APs
+            # 2. An area is covered if it has >= 1 direct AP OR its floor has >= 1 mesh AP
+            if len(direct_aps) >= 2 or len(mesh_aps) >= 2:
+                cross_covered.append(aid)
+                covered.append(aid)
+            elif len(direct_aps) >= 1 or len(mesh_aps) >= 1:
+                covered.append(aid)
+            else:
+                uncovered.append(aid)
 
         return {
             "area_ap_map": area_ap_map,
+            "floor_ap_map": floor_ap_map,
             "covered_area_ids": covered,
             "cross_covered_area_ids": cross_covered,
             "uncovered_area_ids": uncovered,
