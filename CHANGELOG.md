@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.6] - 2026-09-27
+
+### Added
+- **Dual-Interval Engine Architecture**:
+  - Implemented fast-path event push subscribing via `async_track_state_change_event` to HA client and AP state changes for immediate 250ms debounced spatial updates.
+  - Retained 60s slow-path polling cycle for background mesh topology reconciliation and fetching updated vacuum map images.
+- **Semantic Roborock Map Parser**:
+  - Added `vacuum_map_parser.py` supporting Roborock S8 MaxV map images and semantic segments.
+  - Implemented 2D Bresenham raycasting for obstacle and wall penetration path loss calculations (3.5 dB/wall).
+  - Automatically identifies furniture micro-zones (sofas, desks, beds, dining tables, dock stations).
+- **Constrained Multi-AP Vector Localization**:
+  - Replaced MAC-byte angle hashing with vector-based AP triangulation and wall attenuation path loss.
+  - Clamps client coordinates to walkable floor areas and snaps stationary clients to furniture micro-zones.
+  - Added real-time speed calculation ($m/s$) and activity state classification (`stationary`, `pacing`, `moving`).
+- **Deco Spatial Anchors in Options Flow**:
+  - Added UI configuration steps in `WiFiSenseOptionsFlow` to place mesh units at known $(x, y)$ coordinates.
+  - Added user toggle for Fast Event Push.
+
+---
+
 ## [0.2.5] - 2026-09-18
 
 ### Added
