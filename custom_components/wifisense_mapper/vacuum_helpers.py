@@ -281,12 +281,16 @@ async def async_fetch_map_image(hass: HomeAssistant, entity_id: str) -> bytes | 
 
     try:
         if domain == "image":
-            # HA image platform: use async_get_image service
-            from homeassistant.components.image import (
-                async_get_still_stream,  # noqa: F401
-            )
+            # 1. Direct in-memory fetch via entity registry / component
+            image_component = hass.data.get("image")
+            if image_component and hasattr(image_component, "get_entity"):
+                img_entity = image_component.get_entity(entity_id)
+                if img_entity and hasattr(img_entity, "async_image"):
+                    content = await img_entity.async_image()
+                    if content:
+                        return content
 
-            # Fallback: read from state attributes if image_url is exposed
+            # 2. Fallback: read from entity_picture attribute
             img_url = state.attributes.get("entity_picture") or state.attributes.get(
                 "image_url"
             )

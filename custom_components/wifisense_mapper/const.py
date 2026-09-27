@@ -42,6 +42,8 @@ CONF_POLL_INTERVAL: Final = "poll_interval"
 CONF_HEATMAP_ENABLED: Final = "heatmap_enabled"
 CONF_ANOMALY_THRESHOLD: Final = "anomaly_threshold"
 CONF_BASELINE_DAYS: Final = "baseline_days"
+CONF_FAST_EVENT_PUSH: Final = "fast_event_push"
+CONF_DECO_ANCHORS: Final = "deco_anchors"  # dict[ap_mac/name -> dict[area_id, floor_id, x_pct, y_pct]]
 
 # ─── Activity states ──────────────────────────────────────────────────────────
 
@@ -52,7 +54,9 @@ STATE_AWAY: Final = "Away"
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 
-DEFAULT_POLL_INTERVAL: Final = 30  # seconds
+DEFAULT_POLL_INTERVAL: Final = 60  # seconds (slow spatial loop)
+DEFAULT_BACKGROUND_INTERVAL: Final = 60  # seconds
+DEFAULT_FAST_EVENT_PUSH: Final = True
 DEFAULT_ANOMALY_THRESHOLD: Final = 3.0  # z-score
 DEFAULT_BASELINE_DAYS: Final = 7
 DEFAULT_GRID_RESOLUTION: Final = 0.5  # meters per cell
