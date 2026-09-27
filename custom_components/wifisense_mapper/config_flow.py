@@ -13,6 +13,8 @@ from homeassistant.core import callback
 from .const import (
     CONF_ANOMALY_THRESHOLD,
     CONF_BASELINE_DAYS,
+    CONF_DECO_ANCHORS,
+    CONF_FAST_EVENT_PUSH,
     CONF_HEATMAP_ENABLED,
     CONF_PERSON_TAGS,
     CONF_POLL_INTERVAL,
@@ -23,6 +25,7 @@ from .const import (
     CONF_VACUUM_ENTITIES,
     DEFAULT_ANOMALY_THRESHOLD,
     DEFAULT_BASELINE_DAYS,
+    DEFAULT_FAST_EVENT_PUSH,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
     ROUTER_TYPE_DECO,
@@ -257,6 +260,7 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             step_id="init",
             menu_options=[
                 "general",
+                "deco_anchors",
                 "person_tracking",
                 "ap_mapping",
                 "vacuum_mapping",
@@ -282,6 +286,10 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                     CONF_POLL_INTERVAL,
                     default=current.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
                 ): vol.All(vol.Coerce(int), vol.Range(min=10, max=3600)),
+                vol.Optional(
+                    CONF_FAST_EVENT_PUSH,
+                    default=current.get(CONF_FAST_EVENT_PUSH, DEFAULT_FAST_EVENT_PUSH),
+                ): bool,
                 vol.Optional(
                     CONF_HEATMAP_ENABLED,
                     default=current.get(CONF_HEATMAP_ENABLED, True),
@@ -320,6 +328,74 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             }
         )
         return self.async_show_form(step_id="general", data_schema=schema)
+
+    async def async_step_deco_anchors(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure fixed physical coordinates / rooms for Deco mesh nodes."""
+        current = dict(self.config_entry.options)
+        current_anchors = dict(current.get(CONF_DECO_ANCHORS, {}))
+
+        from homeassistant.helpers import area_registry as ar
+
+        area_reg = ar.async_get(self.hass)
+        area_options = {"": "Auto-detect / None"}
+        for area in area_reg.areas.values():
+            area_options[area.id] = area.name
+
+        aps = self._get_known_aps()
+
+        if user_input is not None:
+            updated_anchors: dict[str, Any] = dict(current_anchors)
+            for mac in aps:
+                clean_mac = mac.replace(":", "_").lower()
+                chosen_area = user_input.get(f"area_{clean_mac}")
+                x_pct = user_input.get(f"x_pct_{clean_mac}", 50.0)
+                y_pct = user_input.get(f"y_pct_{clean_mac}", 50.0)
+                if chosen_area:
+                    updated_anchors[mac] = {
+                        "area_id": chosen_area,
+                        "x_pct": float(x_pct),
+                        "y_pct": float(y_pct),
+                    }
+                elif mac in updated_anchors:
+                    updated_anchors.pop(mac)
+            current[CONF_DECO_ANCHORS] = updated_anchors
+            return self.async_create_entry(title="", data=current)
+
+        schema_dict: dict[Any, Any] = {}
+        for mac in aps:
+            clean_mac = mac.replace(":", "_").lower()
+            existing = current_anchors.get(mac, {})
+            def_area = existing.get("area_id", "")
+            def_x = float(existing.get("x_pct", 50.0))
+            def_y = float(existing.get("y_pct", 50.0))
+
+            schema_dict[
+                vol.Optional(
+                    f"area_{clean_mac}",
+                    description={"suggested_value": def_area},
+                    default=def_area,
+                )
+            ] = vol.In(area_options)
+            schema_dict[
+                vol.Optional(
+                    f"x_pct_{clean_mac}",
+                    default=def_x,
+                )
+            ] = vol.All(vol.Coerce(float), vol.Range(min=0.0, max=100.0))
+            schema_dict[
+                vol.Optional(
+                    f"y_pct_{clean_mac}",
+                    default=def_y,
+                )
+            ] = vol.All(vol.Coerce(float), vol.Range(min=0.0, max=100.0))
+
+        return self.async_show_form(
+            step_id="deco_anchors",
+            data_schema=vol.Schema(schema_dict),
+            description_placeholders={"ap_count": str(len(aps))},
+        )
 
     async def async_step_person_tracking(
         self, user_input: dict[str, Any] | None = None

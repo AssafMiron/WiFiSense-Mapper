@@ -31,9 +31,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .clients.base import APStats, ClientInfo
 from .const import (
+    CONF_DECO_ANCHORS,
+    CONF_FAST_EVENT_PUSH,
     CONF_MICRO_ZONES,
     CONF_PERSON_TAGS,
     DEFAULT_ANOMALY_THRESHOLD,
+    DEFAULT_FAST_EVENT_PUSH,
     DEFAULT_GRID_RESOLUTION,
     DEFAULT_POLL_INTERVAL,
     DOMAIN,
@@ -47,10 +50,15 @@ from .csi_discovery import CSINodeInfo, discover_csi_nodes
 from .engine.baseline import BaselineLearner
 from .engine.grid import SpatialGrid
 from .engine.heatmap import HeatmapRenderer
-from .engine.localization import PersonLocalizationEngine
+from .engine.localization import MicroZone, PersonLocalizationEngine
 from .engine.vacuum_align import VacuumMapAligner
+from .engine.vacuum_map_parser import VacuumMapFeatures, parse_vacuum_map_image
 from .registry_helpers import get_all_floors, get_floor_for_area
-from .vacuum_helpers import VacuumMapSource, discover_vacuum_maps
+from .vacuum_helpers import (
+    VacuumMapSource,
+    async_fetch_map_image,
+    discover_vacuum_maps,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -115,6 +123,13 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.heatmap_enabled: bool = entry.options.get("heatmap_enabled", True)
 
+        self.fast_event_push: bool = entry.options.get(
+            CONF_FAST_EVENT_PUSH,
+            entry.data.get(CONF_FAST_EVENT_PUSH, DEFAULT_FAST_EVENT_PUSH),
+        )
+        self._unsub_listeners: list[Any] = []
+        self._fast_debounce_handle: Any = None
+
         # Live data
         self.router_clients: dict[str, ClientInfo] = {}  # mac → ClientInfo
         self.ap_stats: dict[str, APStats] = {}  # mac → APStats
@@ -131,6 +146,96 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.localization_engine = PersonLocalizationEngine()
         self._renderer = HeatmapRenderer()
         self._scanning: bool = True
+
+    def async_setup_event_listeners(self) -> None:
+        """Register state change event listeners for tracked devices and CSI sensors for instant updates."""
+        if not self.fast_event_push:
+            return
+
+        from homeassistant.helpers import entity_registry as er
+        from homeassistant.helpers.event import async_track_state_change_event
+
+        entities_to_track: set[str] = set()
+
+        # Track CSI sensors
+        for node in self.csi_nodes:
+            if node.motion_score_entity_id:
+                entities_to_track.add(node.motion_score_entity_id)
+            if node.motion_detected_entity_id:
+                entities_to_track.add(node.motion_detected_entity_id)
+            if node.presence_entity_id:
+                entities_to_track.add(node.presence_entity_id)
+
+        # Track configured person entities
+        for tracker in self.localization_engine.trackers.values():
+            if tracker.person_entity_id:
+                entities_to_track.add(tracker.person_entity_id)
+
+        # Track device_tracker entities in HA matching tracked MACs
+        ent_reg = er.async_get(self.hass)
+        mac_set = set(self.localization_engine.trackers.keys())
+        for entry in ent_reg.entities.values():
+            if entry.domain == "device_tracker":
+                uid = (entry.unique_id or "").lower()
+                for mac in mac_set:
+                    clean_mac = mac.replace(":", "").lower()
+                    if clean_mac in uid.replace(":", "").lower():
+                        entities_to_track.add(entry.entity_id)
+
+        if entities_to_track:
+            _LOGGER.debug(
+                "Registering fast-path state change listener for %d entities: %s",
+                len(entities_to_track),
+                entities_to_track,
+            )
+            unsub = async_track_state_change_event(
+                self.hass,
+                list(entities_to_track),
+                self._async_handle_fast_event,
+            )
+            self._unsub_listeners.append(unsub)
+
+    def _async_handle_fast_event(self, event: Any) -> None:
+        """Handle incoming state change with 250ms debouncing."""
+        if not self._scanning:
+            return
+
+        def _schedule() -> None:
+            if self._fast_debounce_handle is not None:
+                self._fast_debounce_handle.cancel()
+            self._fast_debounce_handle = self.hass.loop.call_later(
+                0.25, self._run_fast_update
+            )
+
+        self.hass.loop.call_soon_threadsafe(_schedule)
+
+    def _run_fast_update(self) -> None:
+        """Execute in-memory fast-path localization update and notify HA entities."""
+        self._fast_debounce_handle = None
+        try:
+            # 1. Update CSI states from HA states
+            self._update_csi_states()
+
+            # 2. Fast localization update
+            self._update_person_localizations()
+
+            # 3. Notify HA entities immediately without executor jobs or heatmap rendering
+            self.async_set_updated_data(self._current_data())
+            _LOGGER.debug("Fast-path localization update dispatched to HA entities.")
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Fast-path update failed: %s", exc)
+
+    def async_unload_listeners(self) -> None:
+        """Unsubscribe all fast-path event listeners."""
+        for unsub in self._unsub_listeners:
+            try:
+                unsub()
+            except Exception:  # noqa: BLE001, S110
+                pass
+        self._unsub_listeners.clear()
+        if self._fast_debounce_handle is not None:
+            self._fast_debounce_handle.cancel()
+            self._fast_debounce_handle = None
 
     # ─── Initial setup ────────────────────────────────────────────────────────
 
@@ -201,6 +306,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self._scanning:
             return self._current_data()
 
+        # 0. Fetch & parse vacuum maps (Roborock / Valetudo)
+        await self._async_fetch_and_parse_vacuum_maps()
+
         # 1. Poll router
         if self.router_client:
             try:
@@ -261,6 +369,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         node_area_map: dict[str, str] = self.entry.options.get("node_area_map", {})
         node_floor_map: dict[str, str] = self.entry.options.get("node_floor_map", {})
         node_coords_map: dict[str, Any] = self.entry.options.get("node_coords_map", {})
+        deco_anchors: dict[str, Any] = self.entry.options.get(
+            CONF_DECO_ANCHORS, self.entry.data.get(CONF_DECO_ANCHORS, {})
+        )
         room_coords_map: dict[str, Any] = self.entry.options.get("room_coords_map", {})
         overwrite_registry: bool = self.entry.options.get("overwrite_ha_device_areas", False)
 
@@ -286,7 +397,18 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
 
         for mac, ap in self.ap_stats.items():
-            # 2. Configured options override
+            # 2. Configured options override (node maps & deco anchors)
+            anchor = (
+                deco_anchors.get(mac)
+                or deco_anchors.get(ap.mac)
+                or (ap.name and deco_anchors.get(ap.name))
+            )
+            if anchor and isinstance(anchor, dict):
+                if anchor.get("area_id"):
+                    ap.area_id = anchor["area_id"]
+                if anchor.get("floor_id"):
+                    ap.floor_id = anchor["floor_id"]
+
             if mac in node_area_map:
                 ap.area_id = node_area_map[mac]
             if mac in node_floor_map:
@@ -318,19 +440,38 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     overwrite=overwrite_registry,
                 )
 
-            # 5. Register AP position on floor grid
+            # 6. Register AP position on floor grid
             floor_id = ap.floor_id or "default"
             grid = self.grids.get(floor_id) or self.grids.get("default")
             if grid:
-                coords = node_coords_map.get(mac) or node_coords_map.get(ap.mac)
-                if coords and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                if anchor and isinstance(anchor, dict):
+                    x_m = float(
+                        anchor.get(
+                            "x_m", (anchor.get("x_pct", 50.0) / 100.0) * grid.width_m
+                        )
+                    )
+                    y_m = float(
+                        anchor.get(
+                            "y_m", (anchor.get("y_pct", 50.0) / 100.0) * grid.height_m
+                        )
+                    )
                     grid.set_ap_marker(
                         ap.mac,
                         ap.name or f"Deco {ap.mac[-5:]}",
-                        float(coords[0]),
-                        float(coords[1]),
+                        x_m,
+                        y_m,
                         ap.area_id,
                     )
+                else:
+                    coords = node_coords_map.get(mac) or node_coords_map.get(ap.mac)
+                    if coords and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                        grid.set_ap_marker(
+                            ap.mac,
+                            ap.name or f"Deco {ap.mac[-5:]}",
+                            float(coords[0]),
+                            float(coords[1]),
+                            ap.area_id,
+                        )
 
         # 6. Apply room label positions onto floor grids
         for r_key, r_info in room_coords_map.items():
@@ -406,6 +547,52 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             grid = self.grids.get(floor_id) or self.grids.get("default")
             if grid:
                 grid.update_csi_score(node.device_id, float(score))
+
+    # ─── Vacuum map fetching & parsing ────────────────────────────────────────
+
+    async def _async_fetch_and_parse_vacuum_maps(self) -> None:
+        """Fetch vacuum map image bytes and parse semantic features in executor."""
+        for source in self.vacuum_sources:
+            try:
+                img_bytes = await async_fetch_map_image(self.hass, source.entity_id)
+                if not img_bytes:
+                    continue
+                source.last_map_bytes = img_bytes
+
+                floor_id = source.floor_id or next(iter(self.grids), "default")
+                grid = self.grids.get(floor_id) or self.grids.get("default")
+                w_m = grid.width_m if grid else 10.0
+                h_m = grid.height_m if grid else 10.0
+
+                from functools import partial
+
+                features: VacuumMapFeatures = await self.hass.async_add_executor_job(
+                    partial(
+                        parse_vacuum_map_image,
+                        img_bytes,
+                        segments=source.room_segments,
+                        width_m=w_m,
+                        height_m=h_m,
+                        floor_id=floor_id,
+                    )
+                )
+
+                self.localization_engine.set_vacuum_features(floor_id, features)
+
+                # Auto-enrich micro-zones with detected furniture if none configured
+                if features.furniture and not self.localization_engine.micro_zones:
+                    for f in features.furniture:
+                        self.localization_engine.micro_zones.append(
+                            MicroZone.from_dict(f.to_micro_zone_dict())
+                        )
+                _LOGGER.debug(
+                    "Parsed vacuum map for floor=%s: %d rooms, %d furniture items",
+                    floor_id,
+                    len(features.rooms),
+                    len(features.furniture),
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Failed to fetch/parse vacuum map from %s: %s", source.entity_id, exc)
 
     # ─── Heatmap rendering ────────────────────────────────────────────────────
 
@@ -543,6 +730,16 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if score is not None:
                         csi_score = max(csi_score, float(score))
 
+            # Collect all known AP coordinates on this floor for triangulation
+            all_ap_positions: dict[str, tuple[float, float]] = {}
+            for o_mac, o_ap in self.ap_stats.items():
+                if grid:
+                    pos = grid.get_ap_position_m(o_mac)
+                    if pos:
+                        all_ap_positions[o_ap.name or o_mac] = pos
+
+            vac_features = self.localization_engine.get_vacuum_features(floor_id)
+
             tracker.update(
                 ap_mac=ap_mac,
                 ap_name=ap_name,
@@ -559,6 +756,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 micro_zones=self.localization_engine.micro_zones,
                 is_connected=is_connected,
                 ap_distances=ap_distances,
+                all_ap_positions=all_ap_positions,
+                vacuum_features=vac_features,
             )
 
     @property

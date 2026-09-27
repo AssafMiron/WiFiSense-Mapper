@@ -80,6 +80,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Register fast-path event listeners
+    coordinator.async_setup_event_listeners()
+
     # Register services (once, even with multiple entries)
     if not hass.services.has_service(DOMAIN, SERVICE_START_SCAN):
         _register_services(hass)
@@ -106,6 +109,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry and clean up all resources."""
     coordinator: WiFiSenseCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
+    # Unload fast event listeners
+    coordinator.async_unload_listeners()
 
     # Save state before unloading
     await _save_persisted_state(hass, entry, coordinator)
