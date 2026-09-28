@@ -35,7 +35,7 @@
         "description": "Select an area to configure sensing parameters, Deco/AP node placement, vacuum room alignment, or inspect logs and system health.",
         "menu_options": {
           "general": "General & Sensing Settings",
-          "deco_anchors": "Deco Mesh Radio Anchors (Triangulation)",
+          "deco_anchors": "Deco Router Placement (Rooms & Map Positions)",
           "person_tracking": "Person Tag Mapping & Wearables",
           "ap_mapping": "Access Points & Deco Hub Placements",
           "vacuum_mapping": "Vacuum Room Alignment (Roborock / Valetudo)",
@@ -43,8 +43,8 @@
         }
       },
       "deco_anchors": {
-        "title": "Deco Mesh Radio Anchors",
-        "description": "Specify the physical room locations and coordinate placement (0–100%) for your Deco units to anchor spatial multi-AP triangulation to your real floorplan."
+        "title": "Deco Router Placement & Map Positions",
+        "description": "Tell WiFiSense where your Deco units are located. Select the room for each router and adjust its approximate location on your floor map (0% to 100%, from left to right and top to bottom). This allows the system to accurately pinpoint movement and device locations in your home.\n\n{ap_summary}"
       },
       "person_tracking": {
         "title": "Person Tag & Wearable Mapping",

@@ -61,13 +61,17 @@ async def async_setup_entry(
             )
         )
         entities.append(
-            CSIMotionBinarySensor(coordinator, entry, floor_id, floor_name, hub_device_info)
+            CSIMotionBinarySensor(
+                coordinator, entry, floor_id, floor_name, hub_device_info
+            )
         )
 
     # Per-area presence sensors (one per HA area)
     for area in get_all_areas(hass):
         entities.append(
-            PresenceBinarySensor(coordinator, entry, area.id, area.name, hub_device_info)
+            PresenceBinarySensor(
+                coordinator, entry, area.id, area.name, hub_device_info
+            )
         )
 
     async_add_entities(entities)
@@ -144,7 +148,18 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
         engine = getattr(self.coordinator, "localization_engine", None)
         trackers = engine.trackers if engine else {}
         for tracker in trackers.values():
-            if tracker.state.current_area_id == self._area_id and tracker.state.is_home:
+            st = getattr(tracker, "latest_state", None) or getattr(
+                tracker, "state", None
+            )
+            t_area = getattr(tracker, "current_area_id", None) or (
+                st.area_id if st else None
+            )
+            is_home = (
+                getattr(tracker, "is_home", True)
+                if st is None
+                else getattr(st, "is_home", True)
+            )
+            if t_area == self._area_id and is_home:
                 return True
 
         # Source B: router client in this area
@@ -178,7 +193,9 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
             mac for mac, ap in ap_stats.items() if ap.area_id == self._area_id
         }
         area_aps = [
-            ap.name or mac for mac, ap in ap_stats.items() if ap.area_id == self._area_id
+            ap.name or mac
+            for mac, ap in ap_stats.items()
+            if ap.area_id == self._area_id
         ]
         area_clients = [
             c
@@ -188,22 +205,29 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
 
         engine = getattr(self.coordinator, "localization_engine", None)
         trackers = engine.trackers if engine else {}
-        occupants = [
-            tracker.person_name
-            for tracker in trackers.values()
-            if tracker.state.current_area_id == self._area_id and tracker.state.is_home
-        ]
-
-        devices_detail = []
+        occupants: list[str] = []
         distances: list[float] = []
+        devices_detail: list[dict[str, Any]] = []
 
         for tracker in trackers.values():
-            if (
-                tracker.state.current_area_id == self._area_id
-                and tracker.state.is_home
-                and tracker.state.distance_m is not None
-            ):
-                distances.append(tracker.state.distance_m)
+            st = getattr(tracker, "latest_state", None) or getattr(
+                tracker, "state", None
+            )
+            t_area = getattr(tracker, "current_area_id", None) or (
+                st.area_id if st else None
+            )
+            is_home = (
+                getattr(tracker, "is_home", True)
+                if st is None
+                else getattr(st, "is_home", True)
+            )
+            if t_area == self._area_id and is_home:
+                occupants.append(tracker.person_name)
+                dist = (st.distance_m if st else None) or getattr(
+                    tracker, "smoothed_distance", None
+                )
+                if dist is not None:
+                    distances.append(dist)
 
         for c in area_clients[:10]:
             dist = estimate_distance_from_rssi(c.rssi)
