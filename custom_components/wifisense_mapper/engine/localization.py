@@ -132,7 +132,9 @@ class KalmanFilter2D:
         self.r = measurement_noise
         self.last_ts: float = time.time()
 
-    def update(self, z_x: float, z_y: float, ts: float | None = None) -> tuple[float, float, float]:
+    def update(
+        self, z_x: float, z_y: float, ts: float | None = None
+    ) -> tuple[float, float, float]:
         """Predict and update filter with observation (z_x, z_y).
 
         Returns (filtered_x, filtered_y, estimated_speed).
@@ -146,8 +148,12 @@ class KalmanFilter2D:
         self.state[1] += self.state[3] * dt
 
         # Update covariance with process noise: P = F * P * F^T + Q
-        self.cov[0][0] += dt * (self.cov[2][0] + self.cov[0][2] + dt * self.cov[2][2]) + self.q * dt
-        self.cov[1][1] += dt * (self.cov[3][1] + self.cov[1][3] + dt * self.cov[3][3]) + self.q * dt
+        self.cov[0][0] += (
+            dt * (self.cov[2][0] + self.cov[0][2] + dt * self.cov[2][2]) + self.q * dt
+        )
+        self.cov[1][1] += (
+            dt * (self.cov[3][1] + self.cov[1][3] + dt * self.cov[3][3]) + self.q * dt
+        )
         self.cov[2][2] += self.q * dt
         self.cov[3][3] += self.q * dt
 
@@ -210,6 +216,16 @@ class PersonTrackingState:
     distances_to_aps: dict[str, float] = field(default_factory=dict)
     speed_mps: float = 0.0
 
+    @property
+    def current_area_id(self) -> str | None:
+        """Alias for area_id."""
+        return self.area_id
+
+    @property
+    def is_home(self) -> bool:
+        """Return True if person is home (not away)."""
+        return self.activity != STATE_AWAY
+
     def to_dict(self) -> dict[str, Any]:
         """Convert state to dict for entity attributes."""
         return {
@@ -268,6 +284,16 @@ class PersonTracker:
             person_name=self.person_name,
         )
 
+    @property
+    def state(self) -> PersonTrackingState:
+        """Return the latest tracking state."""
+        return self.latest_state
+
+    @property
+    def is_home(self) -> bool:
+        """Return True if the tracked person is home (not away)."""
+        return self.latest_state.is_home
+
     def update(
         self,
         *,
@@ -296,7 +322,11 @@ class PersonTracker:
         # Check if device is completely offline/disconnected or in standby
         if (not is_connected) or (ap_mac is None and rssi is None):
             # Device not reporting / away or asleep
-            if area_name and area_name != "Unknown Room" and self.latest_state.area_name == "Unknown Room":
+            if (
+                area_name
+                and area_name != "Unknown Room"
+                and self.latest_state.area_name == "Unknown Room"
+            ):
                 self.latest_state.area_name = area_name
                 self.latest_state.area_id = area_id
             if floor_id:
@@ -331,7 +361,11 @@ class PersonTracker:
 
         # Calculate real physical distance from connected Deco hub using path loss model
         wall_crossings = 0
-        if vacuum_features and ap_pos_m and hasattr(vacuum_features, "count_wall_crossings"):
+        if (
+            vacuum_features
+            and ap_pos_m
+            and hasattr(vacuum_features, "count_wall_crossings")
+        ):
             # Estimate wall crossings from AP to previous smoothed location
             wall_crossings = vacuum_features.count_wall_crossings(
                 ap_pos_m[0], ap_pos_m[1], self.latest_state.x_m, self.latest_state.y_m
@@ -345,7 +379,9 @@ class PersonTracker:
                 if self.smoothed_distance is None:
                     self.smoothed_distance = dist
                 else:
-                    self.smoothed_distance = round(0.35 * dist + 0.65 * self.smoothed_distance, 1)
+                    self.smoothed_distance = round(
+                        0.35 * dist + 0.65 * self.smoothed_distance, 1
+                    )
                 self.latest_state.distance_m = self.smoothed_distance
         if ap_distances:
             self.latest_state.distances_to_aps = dict(ap_distances)
@@ -371,7 +407,11 @@ class PersonTracker:
 
         if ap_pos_m is not None:
             raw_x, raw_y = ap_pos_m
-            dist_est = self.smoothed_distance if self.smoothed_distance is not None else max(0.5, (-40 - (rssi or -60)) / 10.0)
+            dist_est = (
+                self.smoothed_distance
+                if self.smoothed_distance is not None
+                else max(0.5, (-40 - (rssi or -60)) / 10.0)
+            )
 
             # Check if we have multiple AP positions and distance estimates for multi-AP triangulation
             triangulated_vector: tuple[float, float] | None = None
@@ -392,7 +432,13 @@ class PersonTracker:
 
                     other_d = ap_distances.get(other_name)
                     if other_d is not None and other_d > 0:
-                        proj_d = max(0.0, min(dist_est, (ap_sep**2 + dist_est**2 - other_d**2) / (2.0 * ap_sep)))
+                        proj_d = max(
+                            0.0,
+                            min(
+                                dist_est,
+                                (ap_sep**2 + dist_est**2 - other_d**2) / (2.0 * ap_sep),
+                            ),
+                        )
                         weight = 1.0 / max(0.5, other_d)
                     else:
                         proj_d = min(dist_est, ap_sep * 0.4)
@@ -410,7 +456,14 @@ class PersonTracker:
                 target_y = raw_y + triangulated_vector[1]
             else:
                 # Direction towards room centroid or nearest micro-zone attractor
-                room = vacuum_features.get_room_for_area(area_id) if (vacuum_features and hasattr(vacuum_features, "get_room_for_area")) else None
+                room = (
+                    vacuum_features.get_room_for_area(area_id)
+                    if (
+                        vacuum_features
+                        and hasattr(vacuum_features, "get_room_for_area")
+                    )
+                    else None
+                )
                 if room is not None:
                     vec_x = room.centroid_x_m - raw_x
                     vec_y = room.centroid_y_m - raw_y
@@ -456,7 +509,11 @@ class PersonTracker:
                     target_x = raw_x + (vec_x / vec_len) * min(dist_est, vec_len)
                     target_y = raw_y + (vec_y / vec_len) * min(dist_est, vec_len)
         else:
-            room = vacuum_features.get_room_for_area(area_id) if (vacuum_features and hasattr(vacuum_features, "get_room_for_area")) else None
+            room = (
+                vacuum_features.get_room_for_area(area_id)
+                if (vacuum_features and hasattr(vacuum_features, "get_room_for_area"))
+                else None
+            )
             if room is not None:
                 target_x = room.centroid_x_m
                 target_y = room.centroid_y_m
@@ -466,7 +523,9 @@ class PersonTracker:
 
         # Physical Walkable Boundary Clamping
         if vacuum_features and hasattr(vacuum_features, "clamp_to_area"):
-            target_x, target_y = vacuum_features.clamp_to_area(target_x, target_y, area_id)
+            target_x, target_y = vacuum_features.clamp_to_area(
+                target_x, target_y, area_id
+            )
         else:
             target_x = max(0.0, min(grid_width_m, target_x))
             target_y = max(0.0, min(grid_height_m, target_y))
@@ -490,7 +549,11 @@ class PersonTracker:
         self.latest_state.y_pct = (smooth_y / max(1.0, grid_height_m)) * 100.0
 
         # 4. Area & Dwell Time Calculation
-        effective_area = area_name if (area_name and area_name != "Unknown Room") else (self.current_area_name or "Home")
+        effective_area = (
+            area_name
+            if (area_name and area_name != "Unknown Room")
+            else (self.current_area_name or "Home")
+        )
         if self.current_area_name is None:
             self.current_area_name = effective_area
             self.current_area_id = area_id
@@ -521,13 +584,19 @@ class PersonTracker:
                 if mz.is_inside(smooth_x, smooth_y, floor_id):
                     matched_zone = mz.name
                     # If stationary and very close, snap coordinates to furniture center for stable positioning
-                    if speed < WALKING_VELOCITY_THRESHOLD and math.hypot(smooth_x - mz.x_m, smooth_y - mz.y_m) <= (mz.radius_m * 0.7):
+                    if speed < WALKING_VELOCITY_THRESHOLD and math.hypot(
+                        smooth_x - mz.x_m, smooth_y - mz.y_m
+                    ) <= (mz.radius_m * 0.7):
                         smooth_x = round(0.7 * mz.x_m + 0.3 * smooth_x, 2)
                         smooth_y = round(0.7 * mz.y_m + 0.3 * smooth_y, 2)
                         self.latest_state.x_m = smooth_x
                         self.latest_state.y_m = smooth_y
-                        self.latest_state.x_pct = (smooth_x / max(1.0, grid_width_m)) * 100.0
-                        self.latest_state.y_pct = (smooth_y / max(1.0, grid_height_m)) * 100.0
+                        self.latest_state.x_pct = (
+                            smooth_x / max(1.0, grid_width_m)
+                        ) * 100.0
+                        self.latest_state.y_pct = (
+                            smooth_y / max(1.0, grid_height_m)
+                        ) * 100.0
                     break
 
         self.latest_state.micro_zone = matched_zone
@@ -536,14 +605,23 @@ class PersonTracker:
         if (
             csi_motion_score < 5.0
             and self.latest_state.dwell_time_s >= 10.0
-            and (prev_x == 0.0 or math.hypot(smooth_x - prev_x, smooth_y - prev_y) < 1.0)
+            and (
+                prev_x == 0.0 or math.hypot(smooth_x - prev_x, smooth_y - prev_y) < 1.0
+            )
         ):
             self.latest_state.activity = STATE_STATIONARY
             self.filter.state[2] = 0.0
             self.filter.state[3] = 0.0
-        elif self.latest_state.dwell_time_s < 10.0 and self.last_area_name and self.last_area_name != self.current_area_name:
+        elif (
+            self.latest_state.dwell_time_s < 10.0
+            and self.last_area_name
+            and self.last_area_name != self.current_area_name
+        ):
             self.latest_state.activity = STATE_TRANSITIONING
-        elif speed > WALKING_VELOCITY_THRESHOLD or csi_motion_score > CSI_MOTION_MOVEMENT_THRESHOLD:
+        elif (
+            speed > WALKING_VELOCITY_THRESHOLD
+            or csi_motion_score > CSI_MOTION_MOVEMENT_THRESHOLD
+        ):
             self.latest_state.activity = STATE_WALKING
         else:
             self.latest_state.activity = STATE_STATIONARY

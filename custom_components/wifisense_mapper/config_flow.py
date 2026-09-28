@@ -137,14 +137,14 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         f"TP-Link Deco (Detected at {router.host} — 1-Click Auto Setup)"
                     )
                 else:
-                    options[opt_key] = (
-                        f"TP-Link Deco (Detected at {router.host})"
-                    )
+                    options[opt_key] = f"TP-Link Deco (Detected at {router.host})"
                 if not has_auto_option:
                     default_selection = opt_key
                     has_auto_option = True
             elif router.router_type == ROUTER_TYPE_UNIFI:
-                options[ROUTER_TYPE_UNIFI] = "UniFi (Detected — bridge via HA integration)"
+                options[ROUTER_TYPE_UNIFI] = (
+                    "UniFi (Detected — bridge via HA integration)"
+                )
 
         # Manual / Standard options
         options[ROUTER_TYPE_DECO] = "TP-Link Deco (Manual direct connection)"
@@ -153,11 +153,7 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         options[ROUTER_TYPE_NONE] = "None (CSI / vacuum only)"
 
         schema = vol.Schema(
-            {
-                vol.Required(CONF_ROUTER_TYPE, default=default_selection): vol.In(
-                    options
-                )
-            }
+            {vol.Required(CONF_ROUTER_TYPE, default=default_selection): vol.In(options)}
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
@@ -198,9 +194,7 @@ class WiFiSenseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         suggested_username = self._data.get(CONF_ROUTER_USERNAME) or "admin"
 
         if not suggested_host:
-            detected = get_first_discovered_router_of_type(
-                self.hass, ROUTER_TYPE_DECO
-            )
+            detected = get_first_discovered_router_of_type(self.hass, ROUTER_TYPE_DECO)
             if detected:
                 suggested_host = detected.host
                 suggested_username = detected.username or "admin"
@@ -338,20 +332,78 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
 
         from homeassistant.helpers import area_registry as ar
 
+        from .registry_helpers import auto_link_ap_to_ha_device, get_floor_for_area
+
         area_reg = ar.async_get(self.hass)
-        area_options = {"": "Auto-detect / None"}
-        for area in area_reg.areas.values():
-            area_options[area.id] = area.name
+        area_options: dict[str, str] = {"": "Auto-detect / None"}
+
+        # 1. Discover vacuum room mappings and vacuum segments
+        vac_mappings = current.get("vacuum_room_mappings", {})
+        vac_segments = self._get_vacuum_segments()
+
+        # Build reverse mapping: area_id -> list of vacuum segment labels
+        area_to_vac_labels: dict[str, list[str]] = {}
+        for sid, aid in vac_mappings.items():
+            if aid:
+                seg_label = vac_segments.get(sid, f"Segment {sid}")
+                area_to_vac_labels.setdefault(aid, []).append(seg_label)
+
+        # Retrieve parsed vacuum features if available from coordinator
+        coord = (
+            self.hass.data.get(DOMAIN, {})
+            .get(self.config_entry.entry_id, {})
+            .get("coordinator")
+        )
+        vac_features = None
+        if coord and hasattr(coord, "localization_engine"):
+            vac_features = coord.localization_engine.get_vacuum_features(
+                "default"
+            ) or next(iter(coord.localization_engine.vacuum_features.values()), None)
+
+        for area in sorted(area_reg.areas.values(), key=lambda a: a.name.lower()):
+            floor = get_floor_for_area(self.hass, area.id)
+            floor_tag = f" ({floor.name})" if floor and floor.name else ""
+
+            vac_labels = list(area_to_vac_labels.get(area.id, []))
+            if vac_features:
+                room = vac_features.get_room_for_area(area.id)
+                if room and room.name and room.name not in vac_labels:
+                    vac_labels.append(room.name)
+
+            vac_tag = f" [🧹 Vacuum: {', '.join(vac_labels)}]" if vac_labels else ""
+            area_options[area.id] = f"{area.name}{floor_tag}{vac_tag}"
+
+        # If there are vacuum segments that haven't been mapped to HA areas, offer them with a clear indicator
+        for sid, sname in vac_segments.items():
+            if str(sid) not in vac_mappings:
+                area_options[f"vac_seg_{sid}"] = f"🧹 [Vacuum Map Room] {sname}"
 
         aps = self._get_known_aps()
 
         if user_input is not None:
             updated_anchors: dict[str, Any] = dict(current_anchors)
-            for mac in aps:
+            for mac, label in aps.items():
                 clean_mac = mac.replace(":", "_").lower()
-                chosen_area = user_input.get(f"area_{clean_mac}")
-                x_pct = user_input.get(f"x_pct_{clean_mac}", 50.0)
-                y_pct = user_input.get(f"y_pct_{clean_mac}", 50.0)
+                area_field = f"{label} — Room / Area"
+                x_field = f"{label} — X Position (%)"
+                y_field = f"{label} — Y Position (%)"
+
+                chosen_area = (
+                    user_input[f"area_{clean_mac}"]
+                    if f"area_{clean_mac}" in user_input
+                    else user_input.get(area_field)
+                ) or user_input.get(mac)
+
+                x_pct = (
+                    user_input[f"x_pct_{clean_mac}"]
+                    if f"x_pct_{clean_mac}" in user_input
+                    else user_input.get(x_field, 50.0)
+                )
+                y_pct = (
+                    user_input[f"y_pct_{clean_mac}"]
+                    if f"y_pct_{clean_mac}" in user_input
+                    else user_input.get(y_field, 50.0)
+                )
                 if chosen_area:
                     updated_anchors[mac] = {
                         "area_id": chosen_area,
@@ -364,37 +416,91 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=current)
 
         schema_dict: dict[Any, Any] = {}
-        for mac in aps:
+        summary_lines: list[str] = []
+
+        for mac, label in aps.items():
             clean_mac = mac.replace(":", "_").lower()
             existing = current_anchors.get(mac, {})
             def_area = existing.get("area_id", "")
+            if not def_area:
+                def_area = current.get("node_area_map", {}).get(mac, "")
+            if (
+                not def_area
+                and coord
+                and mac in coord.ap_stats
+                and coord.ap_stats[mac].area_id
+            ):
+                def_area = coord.ap_stats[mac].area_id
+            if not def_area:
+                auto_area, _ = auto_link_ap_to_ha_device(self.hass, mac)
+                if auto_area:
+                    def_area = auto_area
+
             def_x = float(existing.get("x_pct", 50.0))
             def_y = float(existing.get("y_pct", 50.0))
 
+            if "x_pct" not in existing and vac_features and def_area:
+                room = vac_features.get_room_for_area(def_area)
+                if room and vac_features.width_m > 0 and vac_features.height_m > 0:
+                    def_x = round((room.centroid_x_m / vac_features.width_m) * 100.0, 1)
+                    def_y = round(
+                        (room.centroid_y_m / vac_features.height_m) * 100.0, 1
+                    )
+
+            area_field = f"{label} — Room / Area"
+            x_field = f"{label} — X Position (%)"
+            y_field = f"{label} — Y Position (%)"
+
             schema_dict[
                 vol.Optional(
-                    f"area_{clean_mac}",
+                    area_field,
                     description={"suggested_value": def_area},
                     default=def_area,
                 )
             ] = vol.In(area_options)
             schema_dict[
                 vol.Optional(
-                    f"x_pct_{clean_mac}",
+                    x_field,
                     default=def_x,
                 )
             ] = vol.All(vol.Coerce(float), vol.Range(min=0.0, max=100.0))
             schema_dict[
                 vol.Optional(
-                    f"y_pct_{clean_mac}",
+                    y_field,
                     default=def_y,
                 )
             ] = vol.All(vol.Coerce(float), vol.Range(min=0.0, max=100.0))
 
+            assigned_display = "Auto-detect / None"
+            if def_area:
+                if def_area.startswith("vac_seg_"):
+                    sid = def_area.replace("vac_seg_", "")
+                    assigned_display = f"🧹 Vacuum Room {vac_segments.get(sid, sid)}"
+                elif def_area in area_reg.areas:
+                    area_obj = area_reg.areas[def_area]
+                    vac_note = (
+                        f" [🧹 {', '.join(area_to_vac_labels[def_area])}]"
+                        if def_area in area_to_vac_labels
+                        else ""
+                    )
+                    assigned_display = f"{area_obj.name}{vac_note}"
+            summary_lines.append(
+                f"• **{label}** → Room: **{assigned_display}** (📍 {def_x}% from left, {def_y}% from top)"
+            )
+
+        ap_summary = (
+            "\n".join(summary_lines)
+            if summary_lines
+            else "*(No router units detected yet)*"
+        )
+
         return self.async_show_form(
             step_id="deco_anchors",
-            data_schema=vol.Schema(schema_dict),
-            description_placeholders={"ap_count": str(len(aps))},
+            data_schema=vol.Schema(schema_dict, extra=vol.ALLOW_EXTRA),
+            description_placeholders={
+                "ap_count": str(len(aps)),
+                "ap_summary": ap_summary,
+            },
         )
 
     async def async_step_person_tracking(
@@ -610,7 +716,13 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_show_menu(
                 step_id="init",
-                menu_options=["general", "person_tracking", "ap_mapping", "vacuum_mapping", "troubleshooting"],
+                menu_options=[
+                    "general",
+                    "person_tracking",
+                    "ap_mapping",
+                    "vacuum_mapping",
+                    "troubleshooting",
+                ],
             )
 
         pillow_installed = False
@@ -629,16 +741,10 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             else "❌ Not Installed (Using pure-Python BMP/PNG fallback. Install via: pip install Pillow)"
         )
 
-        entry_data = self.hass.data.get(DOMAIN, {}).get(
-            self.config_entry.entry_id, {}
-        )
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id, {})
         coordinator = entry_data.get("coordinator")
-        recent_logs = (
-            coordinator.get_recent_logs(max_lines=25) if coordinator else []
-        )
-        log_text = (
-            "\n".join(recent_logs) if recent_logs else "No logs recorded yet."
-        )
+        recent_logs = coordinator.get_recent_logs(max_lines=25) if coordinator else []
+        log_text = "\n".join(recent_logs) if recent_logs else "No logs recorded yet."
 
         router_connected = (
             coordinator.router_client.is_connected
@@ -670,13 +776,16 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
     def _get_known_aps(self) -> dict[str, str]:
         """Return dict of ap_mac -> display name (matched with HA Device Registry & APStats)."""
         aps: dict[str, str] = {}
+        from homeassistant.helpers import area_registry as ar
         from homeassistant.helpers import device_registry as dr
 
         from .clients.base import RouterClient
         from .registry_helpers import get_device_entries
 
         dev_reg = dr.async_get(self.hass)
+        area_reg = ar.async_get(self.hass)
         mac_to_dev_name: dict[str, str] = {}
+        mac_to_dev_area: dict[str, str] = {}
 
         devices = get_device_entries(dev_reg)
         for device in devices:
@@ -688,11 +797,44 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                     norm = RouterClient.normalize_mac(str(conn[1]))
                     if norm:
                         mac_to_dev_name[norm] = dev_name
+                        if device.area_id:
+                            mac_to_dev_area[norm] = device.area_id
             for ident in device.identifiers:
                 if len(ident) >= 2:
                     norm = RouterClient.normalize_mac(str(ident[1]))
                     if norm:
                         mac_to_dev_name[norm] = dev_name
+                        if device.area_id:
+                            mac_to_dev_area[norm] = device.area_id
+
+        def _format_label(
+            norm_mac: str, raw_name: str | None, area_id: str | None = None
+        ) -> str:
+            resolved_area = None
+            aid = (
+                area_id
+                or mac_to_dev_area.get(norm_mac)
+                or self.config_entry.options.get("node_area_map", {}).get(norm_mac)
+                or self.config_entry.options.get(CONF_DECO_ANCHORS, {})
+                .get(norm_mac, {})
+                .get("area_id")
+            )
+            if aid and aid in area_reg.areas:
+                resolved_area = area_reg.areas[aid].name
+
+            name = (
+                raw_name
+                or mac_to_dev_name.get(norm_mac)
+                or mac_to_dev_name.get(norm_mac.upper())
+            )
+            if not name or name.lower() in ("deco hub", "deco", "router", "ap"):
+                if resolved_area:
+                    return f"Deco — {resolved_area} ({norm_mac})"
+                return f"Deco Hub ({norm_mac})"
+
+            if resolved_area and resolved_area.lower() not in name.lower():
+                return f"{name} — {resolved_area} ({norm_mac})"
+            return f"{name} ({norm_mac})"
 
         try:
             entry_data = self.hass.data.get(DOMAIN, {}).get(
@@ -704,21 +846,19 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                     norm_mac = RouterClient.normalize_mac(mac)
                     if not norm_mac:
                         continue
-                    name_part = (
-                        mac_to_dev_name.get(norm_mac)
-                        or (ap.name if ap.name and ap.name.lower() != "deco hub" else None)
-                        or mac_to_dev_name.get(norm_mac.upper())
-                        or "Deco Hub"
-                    )
-                    aps[norm_mac] = f"{name_part} ({norm_mac})"
+                    aps[norm_mac] = _format_label(norm_mac, ap.name, ap.area_id)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Could not read AP stats: %s", exc)
 
         for mac in self.config_entry.options.get("node_area_map", {}):
             norm_mac = RouterClient.normalize_mac(mac)
             if norm_mac and norm_mac not in aps:
-                name_part = mac_to_dev_name.get(norm_mac) or "Deco Hub"
-                aps[norm_mac] = f"{name_part} ({norm_mac})"
+                aps[norm_mac] = _format_label(norm_mac, None)
+
+        for mac in self.config_entry.options.get(CONF_DECO_ANCHORS, {}):
+            norm_mac = RouterClient.normalize_mac(mac)
+            if norm_mac and norm_mac not in aps:
+                aps[norm_mac] = _format_label(norm_mac, None)
 
         return aps
 
@@ -730,12 +870,16 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
         try:
             from .vacuum_helpers import discover_vacuum_maps
 
-            sources = discover_vacuum_maps(self.hass, additional_entity_ids=configured_vacs)
+            sources = discover_vacuum_maps(
+                self.hass, additional_entity_ids=configured_vacs
+            )
             for src in sources:
                 for seg in src.room_segments:
                     sid = str(seg.segment_id)
                     sname = seg.name or f"Room {sid}"
-                    segments[sid] = f"{sname} (Segment {sid})" if sid not in sname else sname
+                    segments[sid] = (
+                        f"{sname} (Segment {sid})" if sid not in sname else sname
+                    )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Could not read vacuum segments: %s", exc)
 
@@ -784,7 +928,9 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
             if not state:
                 continue
             attrs = state.attributes
-            raw_mac = attrs.get("mac") or attrs.get("mac_address") or attrs.get("wifi_mac")
+            raw_mac = (
+                attrs.get("mac") or attrs.get("mac_address") or attrs.get("wifi_mac")
+            )
             if raw_mac:
                 norm_mac = RouterClient.normalize_mac(str(raw_mac))
                 if norm_mac and norm_mac not in clients:
@@ -819,5 +965,3 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 clients[norm_mac] = f"{name or 'Tag'} ({norm_mac})"
 
         return clients
-
-

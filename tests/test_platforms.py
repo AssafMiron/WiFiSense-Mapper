@@ -94,6 +94,27 @@ class TestBinarySensors:
         assert attrs["devices_detail"][0]["rssi"] == -60
         assert attrs["active_aps"] == ["AP 1"]
 
+    def test_presence_sensor_with_person_tracker(self, mock_config_entry_no_router):
+        """Test presence binary sensor with localization engine PersonTracker."""
+        from custom_components.wifisense_mapper.engine.localization import PersonTracker
+
+        coord = _make_coordinator(mock_config_entry_no_router)
+        coord.data["router_clients"] = {}
+        tracker = PersonTracker("aa:bb:cc:dd:ee:99", person_name="Bob")
+        tracker.current_area_id = "bedroom"
+        tracker.latest_state.area_id = "bedroom"
+        tracker.latest_state.distance_m = 2.5
+        coord.localization_engine.trackers = {tracker.mac: tracker}
+
+        dev_info = DeviceInfo(identifiers={("wifisense_mapper", "bedroom")})
+        sensor = PresenceBinarySensor(
+            coord, mock_config_entry_no_router, "bedroom", "Bedroom", dev_info
+        )
+        assert sensor.is_on is True
+        attrs = sensor.extra_state_attributes
+        assert "Bob" in attrs["occupants"]
+        assert attrs["nearest_distance_m"] == 2.5
+
     def test_estimate_distance_helper(self):
         from custom_components.wifisense_mapper.binary_sensor import (
             estimate_distance_from_rssi,
