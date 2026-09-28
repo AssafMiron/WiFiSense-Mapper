@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.7] - 2026-09-28
+
+### Fixed
+- **PersonTracker State & Presence Detection**:
+  - Fixed `AttributeError: 'PersonTracker' object has no attribute 'state'` in `binary_sensor.py` and `engine/localization.py`.
+  - Added `state`, `is_home`, and `current_area_id` properties to `PersonTracker` and `PersonTrackingState` ensuring robust room-level presence updates.
+
+### Improved
+- **Deco Spatial Anchors Placement UX**:
+  - Replaced raw MAC schema keys in Deco anchors step with user-friendly labels including router name and area.
+  - Auto-populated assigned Home Assistant area in the Deco anchors placement dropdown.
+  - Provided visual indicators in Area selection for vacuum-analyzed rooms (`[🧹 Vacuum: ...]`) and floors.
+  - Simplified menu and dialog copy for non-technical users in `strings.json` and `translations/en.json`.
+
+---
+
 ## [0.2.6] - 2026-09-27
 
 ### Added
