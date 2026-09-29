@@ -74,3 +74,188 @@ async def test_fast_event_push_disabled(hass: HomeAssistant) -> None:
     coord = WiFiSenseCoordinator(hass, entry, router_client=None)
     coord.async_setup_event_listeners()
     assert len(coord._unsub_listeners) == 0
+
+
+@pytest.mark.asyncio
+async def test_fast_event_excludes_wifisense_and_person_entities(
+    hass: HomeAssistant,
+) -> None:
+    """Verify that WiFiSense's own device_trackers and person.* entities are never tracked."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.wifisense_mapper.const import DOMAIN
+
+    ent_reg = er.async_get(hass)
+
+    mac = "11:22:33:44:55:66"
+
+    # 1. WiFiSense's own device tracker
+    ent_reg.async_get_or_create(
+        domain="device_tracker",
+        platform=DOMAIN,
+        unique_id=f"test_entry_tracker_{mac}",
+        suggested_object_id="wifisense_assaf",
+    )
+
+    # 2. External router device tracker
+    external_dt = ent_reg.async_get_or_create(
+        domain="device_tracker",
+        platform="tplink_deco",
+        unique_id=f"deco_client_{mac}",
+        suggested_object_id="assaf_phone",
+    )
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.options = {CONF_FAST_EVENT_PUSH: True}
+    entry.data = {}
+
+    coord = WiFiSenseCoordinator(hass, entry, router_client=None)
+    coord.localization_engine.configure_person(
+        mac=mac,
+        person_entity_id="person.assaf",
+        person_name="Assaf",
+    )
+
+    coord.async_setup_event_listeners()
+
+    # Verify that ONLY the external device tracker is listened to, NOT WiFiSense's own or person entity
+    # (Checking listener callback behavior)
+    # Simulate state change on WiFiSense's own device tracker -> MUST NOT trigger debounce
+    hass.states.async_set("device_tracker.wifisense_assaf", "Living Room")
+    await hass.async_block_till_done()
+    assert coord._fast_debounce_handle is None
+
+    # Simulate state change on person.assaf -> MUST NOT trigger debounce
+    hass.states.async_set("person.assaf", "Living Room")
+    await hass.async_block_till_done()
+    assert coord._fast_debounce_handle is None
+
+    # Simulate state change on external device tracker -> MUST trigger debounce
+    hass.states.async_set(
+        external_dt.entity_id,
+        "home",
+        {"rssi": -55, "ap_mac": "aa:bb:cc:dd:ee:01"},
+    )
+    await hass.async_block_till_done()
+    assert coord._fast_debounce_handle is not None
+
+    # Wait for fast update to run
+    await asyncio.sleep(0.35)
+    await hass.async_block_till_done()
+
+    # External telemetry should be ingested into router_clients
+    assert mac in coord.router_clients
+    assert coord.router_clients[mac].rssi == -55
+    assert coord.router_clients[mac].ap_mac == "aa:bb:cc:dd:ee:01"
+
+    coord.async_unload_listeners()
+
+
+@pytest.mark.asyncio
+async def test_fast_event_no_op_on_identical_state(hass: HomeAssistant) -> None:
+    """Verify that event with identical state and attributes does not trigger debounce."""
+    from homeassistant.helpers import entity_registry as er
+
+    ent_reg = er.async_get(hass)
+    mac = "aa:bb:cc:dd:ee:ff"
+    external_dt = ent_reg.async_get_or_create(
+        domain="device_tracker",
+        platform="tplink_deco",
+        unique_id=f"deco_{mac}",
+        suggested_object_id="noa_phone",
+    )
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.options = {CONF_FAST_EVENT_PUSH: True}
+    entry.data = {}
+
+    coord = WiFiSenseCoordinator(hass, entry, router_client=None)
+    coord.localization_engine.configure_person(mac=mac, person_name="Noa")
+    coord.async_setup_event_listeners()
+
+    # Initial state
+    hass.states.async_set(external_dt.entity_id, "home", {"rssi": -60})
+    await hass.async_block_till_done()
+    assert coord._fast_debounce_handle is not None
+    await asyncio.sleep(0.35)
+    await hass.async_block_till_done()
+    assert coord._fast_debounce_handle is None
+
+    # Firing identical state again should not trigger debounce
+    hass.states.async_set(external_dt.entity_id, "home", {"rssi": -60})
+    await hass.async_block_till_done()
+    assert coord._fast_debounce_handle is None
+
+    # Cached external trackers check
+    assert external_dt.entity_id in coord._external_trackers
+    coord.async_unload_listeners()
+    assert len(coord._external_trackers) == 0
+
+
+@pytest.mark.asyncio
+async def test_fast_event_ap_mac_normalization_and_name_matching(
+    hass: HomeAssistant,
+) -> None:
+    """Verify that uppercase/hyphenated AP MACs and AP names are normalized to ap_stats keys."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.wifisense_mapper.clients.base import APStats
+
+    ent_reg = er.async_get(hass)
+    mac = "22:33:44:55:66:77"
+    external_dt = ent_reg.async_get_or_create(
+        domain="device_tracker",
+        platform="tplink_deco",
+        unique_id=f"deco_client_{mac}",
+        suggested_object_id="test_user_phone",
+    )
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.options = {CONF_FAST_EVENT_PUSH: True}
+    entry.data = {}
+
+    coord = WiFiSenseCoordinator(hass, entry, router_client=None)
+    coord.localization_engine.configure_person(mac=mac, person_name="TestUser")
+
+    # Seed ap_stats with a known AP
+    ap_mac = "aa:bb:cc:dd:ee:99"
+    coord.ap_stats[ap_mac] = APStats(
+        mac=ap_mac,
+        name="Office AP",
+        area_id="office",
+        floor_id="first_floor",
+    )
+
+    coord.async_setup_event_listeners()
+    assert external_dt.entity_id in coord._external_trackers
+
+    # 1. Test uppercase and hyphenated AP MAC: "AA-BB-CC-DD-EE-99"
+    hass.states.async_set(
+        external_dt.entity_id,
+        "home",
+        {"rssi": -58, "ap_mac": "AA-BB-CC-DD-EE-99"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.35)
+    await hass.async_block_till_done()
+
+    assert mac in coord.router_clients
+    assert coord.router_clients[mac].ap_mac == ap_mac
+
+    # 2. Test AP name matching: "Office AP"
+    hass.states.async_set(
+        external_dt.entity_id,
+        "home",
+        {"rssi": -62, "connected_ap": "Office AP"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.35)
+    await hass.async_block_till_done()
+
+    assert coord.router_clients[mac].ap_mac == ap_mac
+
+    coord.async_unload_listeners()
+    assert len(coord._external_trackers) == 0

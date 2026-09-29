@@ -60,7 +60,9 @@ async def async_setup_entry(
         person_name = tracker.person_name
         client = coordinator.router_clients.get(mac)
         label = client.hostname if client and client.hostname else None
-        person_dev_info = _person_device_info(entry, mac, person_name, device_label=label)
+        person_dev_info = _person_device_info(
+            entry, mac, person_name, device_label=label
+        )
         entities.append(
             WifiSensePersonLocationSensor(
                 coordinator, entry, mac, person_name, person_dev_info
@@ -92,10 +94,14 @@ async def async_setup_entry(
     for floor_id in coordinator.grids:
         floor_name = _get_floor_name(hass, floor_id)
         entities.append(
-            AnomalyScoreSensor(coordinator, entry, floor_id, floor_name, hub_device_info)
+            AnomalyScoreSensor(
+                coordinator, entry, floor_id, floor_name, hub_device_info
+            )
         )
         entities.append(
-            WifiClientCountSensor(coordinator, entry, floor_id, floor_name, hub_device_info)
+            WifiClientCountSensor(
+                coordinator, entry, floor_id, floor_name, hub_device_info
+            )
         )
 
     # Per-CSI-node sensors
@@ -125,7 +131,10 @@ async def async_setup_entry(
                 if ident[1].startswith(f"{entry.entry_id}_area_"):
                     dev_reg.async_remove_device(dev.id)
                     break
-                if ident[1].startswith(f"{entry.entry_id}_ap_") and ident[1] not in valid_ap_idents:
+                if (
+                    ident[1].startswith(f"{entry.entry_id}_ap_")
+                    and ident[1] not in valid_ap_idents
+                ):
                     dev_reg.async_remove_device(dev.id)
                     break
                 if any(ident[1] == f"{entry.entry_id}_{f}" for f in coordinator.grids):
@@ -368,6 +377,11 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
         self._area_id = area_id
         self._area_name = area_name
         self._attr_name = f"{area_name} WiFi Coverage"
+        from .registry_helpers import get_floor_for_area
+
+        floor = get_floor_for_area(coordinator.hass, area_id)
+        self._floor_id = floor.floor_id if floor else None
+        self._floor_name = floor.name if floor else None
 
     @property
     def native_value(self) -> str:
@@ -396,19 +410,25 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
         ap_stats = data.get("ap_stats", {})
         clients = data.get("router_clients", {})
 
-        from .registry_helpers import get_floor_for_area
+        if self._floor_id is None:
+            from .registry_helpers import get_floor_for_area
 
-        floor = get_floor_for_area(self.coordinator.hass, self._area_id)
-        floor_id = floor.floor_id if floor else None
+            floor = get_floor_for_area(self.coordinator.hass, self._area_id)
+            if floor:
+                self._floor_id = floor.floor_id
+                self._floor_name = floor.name
+
+        floor_id = self._floor_id
         floor_aps = floor_ap_map.get(floor_id, []) if floor_id else []
 
+        all_aps = sorted(set(direct_aps + floor_aps))
         assigned_ap_details = [
             {
                 "mac": mac,
                 "name": getattr(ap_stats.get(mac), "name", mac),
                 "client_count": getattr(ap_stats.get(mac), "client_count", 0),
             }
-            for mac in set(direct_aps + floor_aps)
+            for mac in all_aps
             if mac in ap_stats
         ]
 
@@ -426,7 +446,7 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
             "area_id": self._area_id,
             "area_name": self._area_name,
             "status": self.native_value,
-            "floor": floor.name if floor else floor_id,
+            "floor": self._floor_name or floor_id,
             "direct_ap_count": len(direct_aps),
             "mesh_ap_count": len(floor_aps),
             "coverage_quality": quality,
@@ -463,7 +483,11 @@ class WifiSensePersonLocationSensor(WiFiSenseBaseSensor):
             return "Unknown"
         if state.activity == "Away" or state.confidence <= 0.0:
             return "Away"
-        if state.activity == "Room Transitioning" and state.last_area_name and state.last_area_name != state.area_name:
+        if (
+            state.activity == "Room Transitioning"
+            and state.last_area_name
+            and state.last_area_name != state.area_name
+        ):
             return f"{state.last_area_name} → {state.area_name}"
         return state.area_name
 

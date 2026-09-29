@@ -241,3 +241,38 @@ class TestMultiApMeshCoverageSensor:
         assert attrs["area_id"] == "hallway"
         assert attrs["status"] == "Mesh Cross-Covered"
 
+    def test_area_coverage_lazy_floor_resolution(self, mock_config_entry_no_router):
+        from unittest.mock import patch
+
+        from custom_components.wifisense_mapper.sensor import AreaCoverageSensor
+
+        coord = _make_coordinator(mock_config_entry_no_router)
+        coord.data["coverage"] = {}
+
+        # Initially no floor assigned
+        with patch(
+            "custom_components.wifisense_mapper.registry_helpers.get_floor_for_area",
+            return_value=None,
+        ):
+            sensor = AreaCoverageSensor(
+                coord,
+                mock_config_entry_no_router,
+                "guest_room",
+                "Guest Room",
+                MagicMock(),
+            )
+        assert sensor._floor_id is None
+
+        # Simulate floor assignment in HA registry
+        mock_floor = MagicMock()
+        mock_floor.floor_id = "second_floor"
+        mock_floor.name = "Second Floor"
+
+        with patch(
+            "custom_components.wifisense_mapper.registry_helpers.get_floor_for_area",
+            return_value=mock_floor,
+        ):
+            attrs = sensor.extra_state_attributes
+            assert attrs["floor"] == "Second Floor"
+            assert sensor._floor_id == "second_floor"
+            assert sensor._floor_name == "Second Floor"

@@ -243,8 +243,6 @@ class PersonTrackingState:
             "x_pct": round(self.x_pct, 1),
             "y_pct": round(self.y_pct, 1),
             "confidence": round(self.confidence, 2),
-            "dwell_time_s": int(self.dwell_time_s),
-            "last_seen_ts": self.last_seen_ts,
             "last_area_name": self.last_area_name,
             "ap_mac": self.ap_mac,
             "connected_ap_name": self.connected_ap_name,

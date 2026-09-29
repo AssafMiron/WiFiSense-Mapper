@@ -69,8 +69,9 @@ async def async_setup_entry(
     # 1. Automatically prune previously registered tracker entities that are no longer wanted
     existing_entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
     for entity_entry in existing_entries:
-        if entity_entry.domain == "device_tracker" and entity_entry.unique_id.startswith(
-            f"{entry.entry_id}_tracker_"
+        if (
+            entity_entry.domain == "device_tracker"
+            and entity_entry.unique_id.startswith(f"{entry.entry_id}_tracker_")
         ):
             mac = entity_entry.unique_id.replace(f"{entry.entry_id}_tracker_", "")
             if not track_all and mac not in tracked_macs:
@@ -108,7 +109,9 @@ async def async_setup_entry(
         if norm_mac in seen_macs:
             continue
         seen_macs.add(norm_mac)
-        client = coordinator.router_clients.get(norm_mac) or coordinator.router_clients.get(mac)
+        client = coordinator.router_clients.get(
+            norm_mac
+        ) or coordinator.router_clients.get(mac)
         tag_data = person_tags.get(mac) or person_tags.get(norm_mac)
         person_name = (
             tag_data.get("person_name")
@@ -119,7 +122,9 @@ async def async_setup_entry(
         )
         label = client.hostname if client and client.hostname else None
         if person_name:
-            device_info = _person_device_info(entry, norm_mac, person_name, device_label=label)
+            device_info = _person_device_info(
+                entry, norm_mac, person_name, device_label=label
+            )
         else:
             device_info = DeviceInfo(
                 identifiers={(DOMAIN, f"{entry.entry_id}_client_{norm_mac}")},
@@ -127,11 +132,15 @@ async def async_setup_entry(
                 manufacturer=MANUFACTURER,
                 model="WiFi Client Tracker",
             )
-        entities.append(WifiSenseDeviceTracker(coordinator, entry, norm_mac, device_info))
+        entities.append(
+            WifiSenseDeviceTracker(coordinator, entry, norm_mac, device_info)
+        )
 
     # If track_all is True, add any remaining discovered router clients
     if track_all:
-        for mac, client in list(coordinator.router_clients.items())[:MAX_TRACKED_DEVICES]:
+        for mac, client in list(coordinator.router_clients.items())[
+            :MAX_TRACKED_DEVICES
+        ]:
             norm_mac = mac.lower().replace("-", ":").replace(".", ":")
             if norm_mac in seen_macs:
                 continue
@@ -142,7 +151,9 @@ async def async_setup_entry(
                 manufacturer=MANUFACTURER,
                 model="WiFi Client Tracker",
             )
-            entities.append(WifiSenseDeviceTracker(coordinator, entry, norm_mac, device_info))
+            entities.append(
+                WifiSenseDeviceTracker(coordinator, entry, norm_mac, device_info)
+            )
 
     if entities:
         async_add_entities(entities)
@@ -226,6 +237,7 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
         attrs: dict[str, Any] = {"mac": self._mac}
         client = self.coordinator.router_clients.get(self._mac)
         if client:
+            ap_obj = self.coordinator.ap_stats.get(client.ap_mac or "")
             attrs.update(
                 {
                     "ip": client.ip,
@@ -233,10 +245,7 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
                     "band": client.band,
                     "rssi": client.rssi,
                     "ap_mac": client.ap_mac,
-                    "ap_name": self.coordinator.ap_stats.get(client.ap_mac or "", None)
-                    and getattr(
-                        self.coordinator.ap_stats.get(client.ap_mac or ""), "name", None
-                    ),
+                    "ap_name": getattr(ap_obj, "name", None),
                 }
             )
 
@@ -248,13 +257,12 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
                     "person_name": p_state.person_name,
                     "activity": p_state.activity,
                     "micro_zone": p_state.micro_zone,
-                    "x_m": p_state.x_m,
-                    "y_m": p_state.y_m,
-                    "x_pct": p_state.x_pct,
-                    "y_pct": p_state.y_pct,
-                    "confidence": p_state.confidence,
-                    "dwell_time_s": int(p_state.dwell_time_s),
-                    "speed_mps": p_state.speed_mps,
+                    "x_m": round(p_state.x_m, 2),
+                    "y_m": round(p_state.y_m, 2),
+                    "x_pct": round(p_state.x_pct, 1),
+                    "y_pct": round(p_state.y_pct, 1),
+                    "confidence": round(p_state.confidence, 2),
+                    "speed_mps": round(p_state.speed_mps, 2),
                 }
             )
 
