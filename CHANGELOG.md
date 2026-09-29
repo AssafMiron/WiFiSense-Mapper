@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.7] - 2026-09-28
 
 ### Fixed
+- **Fast Event Feedback Loop & Database Bloat Prevention**:
+  - Filtered out WiFiSense's own `device_tracker` entities and `person.*` entities from the Fast Event Push listener to eliminate recursive state change feedback loops.
+  - Implemented deduplication and state change validation to prevent redundant coordinator updates and recorder database bloat.
+- **Fast-Path Optimization & Normalization**:
+  - Pre-cached floor lookups for area coverage sensors, reducing repeated registry queries.
+  - Normalized AP MAC addresses across fast-path telemetry ingestion and localization engine.
+  - Cached person tracker state objects for efficient fast-path resolution.
 - **PersonTracker State & Presence Detection**:
   - Fixed `AttributeError: 'PersonTracker' object has no attribute 'state'` in `binary_sensor.py` and `engine/localization.py`.
   - Added `state`, `is_home`, and `current_area_id` properties to `PersonTracker` and `PersonTrackingState` ensuring robust room-level presence updates.
