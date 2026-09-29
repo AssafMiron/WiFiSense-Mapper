@@ -129,6 +129,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._unsub_listeners: list[Any] = []
         self._fast_debounce_handle: Any = None
+        self._updating_fast: bool = False
 
         # Live data
         self.router_clients: dict[str, ClientInfo] = {}  # mac → ClientInfo
@@ -166,38 +167,72 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if node.presence_entity_id:
                 entities_to_track.add(node.presence_entity_id)
 
-        # Track configured person entities
-        for tracker in self.localization_engine.trackers.values():
-            if tracker.person_entity_id:
-                entities_to_track.add(tracker.person_entity_id)
-
-        # Track device_tracker entities in HA matching tracked MACs
+        # Track external router device_tracker entities in HA matching tracked MACs
+        # NOTE: We strictly exclude WiFiSense's own entities (platform == DOMAIN) and
+        # do NOT track person.* entities to prevent infinite circular feedback loops.
         ent_reg = er.async_get(self.hass)
-        mac_set = set(self.localization_engine.trackers.keys())
-        for entry in ent_reg.entities.values():
-            if entry.domain == "device_tracker":
-                uid = (entry.unique_id or "").lower()
-                for mac in mac_set:
-                    clean_mac = mac.replace(":", "").lower()
-                    if clean_mac in uid.replace(":", "").lower():
-                        entities_to_track.add(entry.entity_id)
+        clean_mac_map: dict[str, str] = {
+            m.lower().replace(":", "").replace("-", ""): m
+            for m in self.localization_engine.trackers
+        }
+        for reg_entry in ent_reg.entities.values():
+            if reg_entry.domain == "device_tracker":
+                if reg_entry.platform == DOMAIN:
+                    continue
+                uid = (
+                    (reg_entry.unique_id or "")
+                    .lower()
+                    .replace(":", "")
+                    .replace("-", "")
+                )
+                for clean_mac in clean_mac_map:
+                    if clean_mac and clean_mac in uid:
+                        entities_to_track.add(reg_entry.entity_id)
 
-        if entities_to_track:
+        # Defensive guard: filter out any entities belonging to our own domain
+        safe_entities = [
+            eid
+            for eid in entities_to_track
+            if not eid.startswith(f"{DOMAIN}.") and f"_{DOMAIN}_" not in eid
+        ]
+
+        if safe_entities:
             _LOGGER.debug(
                 "Registering fast-path state change listener for %d entities: %s",
-                len(entities_to_track),
-                entities_to_track,
+                len(safe_entities),
+                safe_entities,
             )
             unsub = async_track_state_change_event(
                 self.hass,
-                list(entities_to_track),
+                safe_entities,
                 self._async_handle_fast_event,
             )
             self._unsub_listeners.append(unsub)
 
     def _async_handle_fast_event(self, event: Any) -> None:
-        """Handle incoming state change with 250ms debouncing."""
-        if not self._scanning:
+        """Handle incoming state change with 250ms debouncing and change validation."""
+        if not self._scanning or self._updating_fast:
+            return
+
+        event_data = getattr(event, "data", {})
+        entity_id = event_data.get("entity_id", "")
+        old_state = event_data.get("old_state")
+        new_state = event_data.get("new_state")
+
+        # Ignore unavailable / unknown / empty states
+        if new_state is None or new_state.state in ("unknown", "unavailable"):
+            return
+
+        # Ignore events where neither state nor attributes changed
+        if (
+            old_state is not None
+            and old_state.state == new_state.state
+            and old_state.attributes == new_state.attributes
+        ):
+            return
+
+        # Defensive guard: Never react to our own integration's entities
+        if entity_id.startswith(f"{DOMAIN}.") or f"_{DOMAIN}_" in entity_id:
             return
 
         def _schedule() -> None:
@@ -212,18 +247,90 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _run_fast_update(self) -> None:
         """Execute in-memory fast-path localization update and notify HA entities."""
         self._fast_debounce_handle = None
+        if self._updating_fast or not self._scanning:
+            return
+
+        self._updating_fast = True
         try:
             # 1. Update CSI states from HA states
             self._update_csi_states()
 
-            # 2. Fast localization update
+            # 2. Update client states from external device_tracker entities if available
+            self._update_clients_from_external_trackers()
+
+            # 3. Fast localization update
             self._update_person_localizations()
 
-            # 3. Notify HA entities immediately without executor jobs or heatmap rendering
+            # 4. Notify HA entities immediately without executor jobs or heatmap rendering
             self.async_set_updated_data(self._current_data())
             _LOGGER.debug("Fast-path localization update dispatched to HA entities.")
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Fast-path update failed: %s", exc)
+        finally:
+            self._updating_fast = False
+
+    def _update_clients_from_external_trackers(self) -> None:
+        """Update client telemetry from external router device_tracker entities."""
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(self.hass)
+        clean_mac_map: dict[str, str] = {
+            m.lower().replace(":", "").replace("-", ""): m
+            for m in self.localization_engine.trackers
+        }
+        for reg_entry in ent_reg.entities.values():
+            if reg_entry.domain != "device_tracker" or reg_entry.platform == DOMAIN:
+                continue
+            uid = (reg_entry.unique_id or "").lower().replace(":", "").replace("-", "")
+            for clean_mac, orig_mac in clean_mac_map.items():
+                if clean_mac and clean_mac in uid:
+                    st = self.hass.states.get(reg_entry.entity_id)
+                    if st is None:
+                        continue
+                    attrs = st.attributes
+                    client = self.router_clients.get(orig_mac)
+                    if not client:
+                        client = ClientInfo(mac=orig_mac)
+                        self.router_clients[orig_mac] = client
+
+                    is_home = st.state not in ("not_home", "unavailable", "unknown")
+                    if client.extra is None:
+                        client.extra = {}
+                    client.extra["is_home"] = is_home
+
+                    raw_sig = (
+                        attrs.get("rssi")
+                        or attrs.get("signal_level")
+                        or attrs.get("signal")
+                    )
+                    if isinstance(raw_sig, dict):
+                        val = (
+                            raw_sig.get("band5")
+                            or raw_sig.get("band2_4")
+                            or raw_sig.get("band6")
+                        )
+                        if isinstance(val, (int, float)):
+                            client.rssi = int(val)
+                    elif isinstance(raw_sig, (int, float)):
+                        val_int = int(raw_sig)
+                        if val_int < 0:
+                            client.rssi = val_int
+
+                    ap_val = (
+                        attrs.get("ap_mac")
+                        or attrs.get("ap_bssid")
+                        or attrs.get("bssid")
+                        or attrs.get("connected_ap")
+                        or attrs.get("ap")
+                    )
+                    if ap_val:
+                        client.ap_mac = str(ap_val)
+                    if attrs.get("ip"):
+                        client.ip = str(attrs["ip"])
+                    if attrs.get("ssid"):
+                        client.ssid = str(attrs["ssid"])
+                    if attrs.get("band"):
+                        client.band = str(attrs["band"])
 
     def async_unload_listeners(self) -> None:
         """Unsubscribe all fast-path event listeners."""
@@ -373,7 +480,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             CONF_DECO_ANCHORS, self.entry.data.get(CONF_DECO_ANCHORS, {})
         )
         room_coords_map: dict[str, Any] = self.entry.options.get("room_coords_map", {})
-        overwrite_registry: bool = self.entry.options.get("overwrite_ha_device_areas", False)
+        overwrite_registry: bool = self.entry.options.get(
+            "overwrite_ha_device_areas", False
+        )
 
         # 1. Seed any AP configured in options that is not yet in ap_stats
         for raw_mac, area_id in node_area_map.items():
@@ -385,16 +494,17 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     mac=norm_mac,
                     name=None,
                     area_id=area_id,
-                    floor_id=node_floor_map.get(raw_mac) or node_floor_map.get(norm_mac),
+                    floor_id=node_floor_map.get(raw_mac)
+                    or node_floor_map.get(norm_mac),
                     client_count=0,
                     extra={"configured_in_options": True},
                 )
             else:
                 self.ap_stats[norm_mac].area_id = area_id
                 if raw_mac in node_floor_map or norm_mac in node_floor_map:
-                    self.ap_stats[norm_mac].floor_id = (
-                        node_floor_map.get(raw_mac) or node_floor_map.get(norm_mac)
-                    )
+                    self.ap_stats[norm_mac].floor_id = node_floor_map.get(
+                        raw_mac
+                    ) or node_floor_map.get(norm_mac)
 
         for mac, ap in self.ap_stats.items():
             # 2. Configured options override (node maps & deco anchors)
@@ -427,6 +537,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # 4. If floor_id is still unassigned but area_id is known, inherit from HA area
             if ap.area_id and not ap.floor_id:
                 from .registry_helpers import get_floor_for_area
+
                 area_floor = get_floor_for_area(self.hass, ap.area_id)
                 if area_floor:
                     ap.floor_id = area_floor.floor_id
@@ -464,7 +575,11 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 else:
                     coords = node_coords_map.get(mac) or node_coords_map.get(ap.mac)
-                    if coords and isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                    if (
+                        coords
+                        and isinstance(coords, (list, tuple))
+                        and len(coords) >= 2
+                    ):
                         grid.set_ap_marker(
                             ap.mac,
                             ap.name or f"Deco {ap.mac[-5:]}",
@@ -592,7 +707,11 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     len(features.furniture),
                 )
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.debug("Failed to fetch/parse vacuum map from %s: %s", source.entity_id, exc)
+                _LOGGER.debug(
+                    "Failed to fetch/parse vacuum map from %s: %s",
+                    source.entity_id,
+                    exc,
+                )
 
     # ─── Heatmap rendering ────────────────────────────────────────────────────
 
@@ -675,7 +794,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             is_connected = False
             if client:
-                is_connected = client.extra.get("is_home", True) if client.extra else True
+                is_connected = (
+                    client.extra.get("is_home", True) if client.extra else True
+                )
                 if client.rssi is not None or client.ip is not None:
                     is_connected = True
 
@@ -694,7 +815,11 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             floor_name = get_floor_name_from_id(self.hass, floor_id)
             area_id = (client and client.area_id) or (ap_obj and ap_obj.area_id) or None
-            area_name = get_area_name_from_id(self.hass, area_id) if area_id else (tracker.current_area_name or "Home")
+            area_name = (
+                get_area_name_from_id(self.hass, area_id)
+                if area_id
+                else (tracker.current_area_name or "Home")
+            )
 
             grid = self.grids.get(floor_id) or self.grids.get("default")
             grid_w = grid.width_m if grid else 10.0
@@ -712,7 +837,11 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for other_mac, other_ap in self.ap_stats.items():
                 if other_ap.name and other_ap.name not in ap_distances:
                     other_pos = grid.get_ap_position_m(other_mac) if grid else None
-                    if other_pos and tracker.latest_state.x_m > 0 and tracker.latest_state.y_m > 0:
+                    if (
+                        other_pos
+                        and tracker.latest_state.x_m > 0
+                        and tracker.latest_state.y_m > 0
+                    ):
                         geom_d = round(
                             math.hypot(
                                 tracker.latest_state.x_m - other_pos[0],
@@ -844,4 +973,3 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Pause data collection without unloading the integration."""
         self._scanning = False
         _LOGGER.info("WiFiSense scanning paused")
-
