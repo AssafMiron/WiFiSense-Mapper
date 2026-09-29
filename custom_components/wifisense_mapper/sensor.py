@@ -410,6 +410,14 @@ class AreaCoverageSensor(WiFiSenseBaseSensor):
         ap_stats = data.get("ap_stats", {})
         clients = data.get("router_clients", {})
 
+        if self._floor_id is None:
+            from .registry_helpers import get_floor_for_area
+
+            floor = get_floor_for_area(self.coordinator.hass, self._area_id)
+            if floor:
+                self._floor_id = floor.floor_id
+                self._floor_name = floor.name
+
         floor_id = self._floor_id
         floor_aps = floor_ap_map.get(floor_id, []) if floor_id else []
 

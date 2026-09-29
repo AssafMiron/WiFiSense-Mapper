@@ -188,4 +188,74 @@ async def test_fast_event_no_op_on_identical_state(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
     assert coord._fast_debounce_handle is None
 
+    # Cached external trackers check
+    assert external_dt.entity_id in coord._external_trackers
     coord.async_unload_listeners()
+    assert len(coord._external_trackers) == 0
+
+
+@pytest.mark.asyncio
+async def test_fast_event_ap_mac_normalization_and_name_matching(
+    hass: HomeAssistant,
+) -> None:
+    """Verify that uppercase/hyphenated AP MACs and AP names are normalized to ap_stats keys."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.wifisense_mapper.clients.base import APStats
+
+    ent_reg = er.async_get(hass)
+    mac = "22:33:44:55:66:77"
+    external_dt = ent_reg.async_get_or_create(
+        domain="device_tracker",
+        platform="tplink_deco",
+        unique_id=f"deco_client_{mac}",
+        suggested_object_id="test_user_phone",
+    )
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.options = {CONF_FAST_EVENT_PUSH: True}
+    entry.data = {}
+
+    coord = WiFiSenseCoordinator(hass, entry, router_client=None)
+    coord.localization_engine.configure_person(mac=mac, person_name="TestUser")
+
+    # Seed ap_stats with a known AP
+    ap_mac = "aa:bb:cc:dd:ee:99"
+    coord.ap_stats[ap_mac] = APStats(
+        mac=ap_mac,
+        name="Office AP",
+        area_id="office",
+        floor_id="first_floor",
+    )
+
+    coord.async_setup_event_listeners()
+    assert external_dt.entity_id in coord._external_trackers
+
+    # 1. Test uppercase and hyphenated AP MAC: "AA-BB-CC-DD-EE-99"
+    hass.states.async_set(
+        external_dt.entity_id,
+        "home",
+        {"rssi": -58, "ap_mac": "AA-BB-CC-DD-EE-99"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.35)
+    await hass.async_block_till_done()
+
+    assert mac in coord.router_clients
+    assert coord.router_clients[mac].ap_mac == ap_mac
+
+    # 2. Test AP name matching: "Office AP"
+    hass.states.async_set(
+        external_dt.entity_id,
+        "home",
+        {"rssi": -62, "connected_ap": "Office AP"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.35)
+    await hass.async_block_till_done()
+
+    assert coord.router_clients[mac].ap_mac == ap_mac
+
+    coord.async_unload_listeners()
+    assert len(coord._external_trackers) == 0

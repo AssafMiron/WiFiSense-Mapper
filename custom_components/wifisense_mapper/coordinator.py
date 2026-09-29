@@ -26,7 +26,7 @@ from collections import deque
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .clients.base import APStats, ClientInfo
@@ -130,6 +130,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsub_listeners: list[Any] = []
         self._fast_debounce_handle: Any = None
         self._updating_fast: bool = False
+        self._external_trackers: dict[str, str] = {}  # entity_id -> orig_mac
 
         # Live data
         self.router_clients: dict[str, ClientInfo] = {}  # mac → ClientInfo
@@ -156,6 +157,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         from homeassistant.helpers import entity_registry as er
         from homeassistant.helpers.event import async_track_state_change_event
 
+        self._external_trackers.clear()
         entities_to_track: set[str] = set()
 
         # Track CSI sensors
@@ -185,9 +187,10 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     .replace(":", "")
                     .replace("-", "")
                 )
-                for clean_mac in clean_mac_map:
+                for clean_mac, orig_mac in clean_mac_map.items():
                     if clean_mac and clean_mac in uid:
                         entities_to_track.add(reg_entry.entity_id)
+                        self._external_trackers[reg_entry.entity_id] = orig_mac
 
         # Defensive guard: filter out any entities belonging to our own domain
         safe_entities = [
@@ -209,9 +212,10 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._unsub_listeners.append(unsub)
 
+    @callback
     def _async_handle_fast_event(self, event: Any) -> None:
         """Handle incoming state change with 250ms debouncing and change validation."""
-        if not self._scanning or self._updating_fast:
+        if not self._scanning:
             return
 
         event_data = getattr(event, "data", {})
@@ -235,15 +239,13 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if entity_id.startswith(f"{DOMAIN}.") or f"_{DOMAIN}_" in entity_id:
             return
 
-        def _schedule() -> None:
-            if self._fast_debounce_handle is not None:
-                self._fast_debounce_handle.cancel()
-            self._fast_debounce_handle = self.hass.loop.call_later(
-                0.25, self._run_fast_update
-            )
+        if self._fast_debounce_handle is not None:
+            self._fast_debounce_handle.cancel()
+        self._fast_debounce_handle = self.hass.loop.call_later(
+            0.25, self._run_fast_update
+        )
 
-        self.hass.loop.call_soon_threadsafe(_schedule)
-
+    @callback
     def _run_fast_update(self) -> None:
         """Execute in-memory fast-path localization update and notify HA entities."""
         self._fast_debounce_handle = None
@@ -270,67 +272,66 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._updating_fast = False
 
     def _update_clients_from_external_trackers(self) -> None:
-        """Update client telemetry from external router device_tracker entities."""
-        from homeassistant.helpers import entity_registry as er
-
-        ent_reg = er.async_get(self.hass)
-        clean_mac_map: dict[str, str] = {
-            m.lower().replace(":", "").replace("-", ""): m
-            for m in self.localization_engine.trackers
-        }
-        for reg_entry in ent_reg.entities.values():
-            if reg_entry.domain != "device_tracker" or reg_entry.platform == DOMAIN:
+        """Update client telemetry from cached external router device_tracker entities."""
+        for entity_id, orig_mac in self._external_trackers.items():
+            st = self.hass.states.get(entity_id)
+            if st is None:
                 continue
-            uid = (reg_entry.unique_id or "").lower().replace(":", "").replace("-", "")
-            for clean_mac, orig_mac in clean_mac_map.items():
-                if clean_mac and clean_mac in uid:
-                    st = self.hass.states.get(reg_entry.entity_id)
-                    if st is None:
-                        continue
-                    attrs = st.attributes
-                    client = self.router_clients.get(orig_mac)
-                    if not client:
-                        client = ClientInfo(mac=orig_mac)
-                        self.router_clients[orig_mac] = client
+            attrs = st.attributes
+            client = self.router_clients.get(orig_mac)
+            if not client:
+                client = ClientInfo(mac=orig_mac)
+                self.router_clients[orig_mac] = client
 
-                    is_home = st.state not in ("not_home", "unavailable", "unknown")
-                    if client.extra is None:
-                        client.extra = {}
-                    client.extra["is_home"] = is_home
+            is_home = st.state not in ("not_home", "unavailable", "unknown")
+            if client.extra is None:
+                client.extra = {}
+            client.extra["is_home"] = is_home
 
-                    raw_sig = (
-                        attrs.get("rssi")
-                        or attrs.get("signal_level")
-                        or attrs.get("signal")
+            raw_sig = (
+                attrs.get("rssi") or attrs.get("signal_level") or attrs.get("signal")
+            )
+            if isinstance(raw_sig, dict):
+                val = (
+                    raw_sig.get("band5")
+                    or raw_sig.get("band2_4")
+                    or raw_sig.get("band6")
+                )
+                if isinstance(val, (int, float)):
+                    client.rssi = int(val)
+            elif isinstance(raw_sig, (int, float)):
+                val_int = int(raw_sig)
+                if val_int < 0:
+                    client.rssi = val_int
+
+            ap_val = (
+                attrs.get("ap_mac")
+                or attrs.get("ap_bssid")
+                or attrs.get("bssid")
+                or attrs.get("connected_ap")
+                or attrs.get("ap")
+            )
+            if ap_val:
+                norm_ap = str(ap_val).strip().lower().replace("-", ":")
+                if norm_ap in self.ap_stats:
+                    client.ap_mac = norm_ap
+                else:
+                    matched_mac = next(
+                        (
+                            ap.mac
+                            for ap in self.ap_stats.values()
+                            if ap.name
+                            and ap.name.lower() == str(ap_val).strip().lower()
+                        ),
+                        None,
                     )
-                    if isinstance(raw_sig, dict):
-                        val = (
-                            raw_sig.get("band5")
-                            or raw_sig.get("band2_4")
-                            or raw_sig.get("band6")
-                        )
-                        if isinstance(val, (int, float)):
-                            client.rssi = int(val)
-                    elif isinstance(raw_sig, (int, float)):
-                        val_int = int(raw_sig)
-                        if val_int < 0:
-                            client.rssi = val_int
-
-                    ap_val = (
-                        attrs.get("ap_mac")
-                        or attrs.get("ap_bssid")
-                        or attrs.get("bssid")
-                        or attrs.get("connected_ap")
-                        or attrs.get("ap")
-                    )
-                    if ap_val:
-                        client.ap_mac = str(ap_val)
-                    if attrs.get("ip"):
-                        client.ip = str(attrs["ip"])
-                    if attrs.get("ssid"):
-                        client.ssid = str(attrs["ssid"])
-                    if attrs.get("band"):
-                        client.band = str(attrs["band"])
+                    client.ap_mac = matched_mac or norm_ap
+            if attrs.get("ip"):
+                client.ip = str(attrs["ip"])
+            if attrs.get("ssid"):
+                client.ssid = str(attrs["ssid"])
+            if attrs.get("band"):
+                client.band = str(attrs["band"])
 
     def async_unload_listeners(self) -> None:
         """Unsubscribe all fast-path event listeners."""
@@ -340,6 +341,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception:  # noqa: BLE001, S110
                 pass
         self._unsub_listeners.clear()
+        self._external_trackers.clear()
         if self._fast_debounce_handle is not None:
             self._fast_debounce_handle.cancel()
             self._fast_debounce_handle = None

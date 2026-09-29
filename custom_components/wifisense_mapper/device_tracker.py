@@ -237,6 +237,7 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
         attrs: dict[str, Any] = {"mac": self._mac}
         client = self.coordinator.router_clients.get(self._mac)
         if client:
+            ap_obj = self.coordinator.ap_stats.get(client.ap_mac or "")
             attrs.update(
                 {
                     "ip": client.ip,
@@ -244,10 +245,7 @@ class WifiSenseDeviceTracker(CoordinatorEntity[WiFiSenseCoordinator], TrackerEnt
                     "band": client.band,
                     "rssi": client.rssi,
                     "ap_mac": client.ap_mac,
-                    "ap_name": self.coordinator.ap_stats.get(client.ap_mac or "", None)
-                    and getattr(
-                        self.coordinator.ap_stats.get(client.ap_mac or ""), "name", None
-                    ),
+                    "ap_name": getattr(ap_obj, "name", None),
                 }
             )
 
