@@ -142,6 +142,35 @@ class TestHeatmapRenderer:
         assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
         assert png_bytes.endswith(b"IEND\xaeB`\x82")
 
+    def test_render_rf_links(self):
+        from custom_components.wifisense_mapper.engine.rf_sensing import (
+            RFSensingSnapshot,
+        )
+
+        grid = SpatialGrid("g1", width_m=10, height_m=10, resolution_m=1.0)
+        grid.set_ap_marker("11:11:11:11:11:11", "Main Deco", 2.0, 2.0, "living_room")
+        grid.set_ap_marker("22:22:22:22:22:22", "Sat Deco", 8.0, 8.0, "office")
+        grid.room_labels["living_room"] = {"name": "Living Room", "x_m": 2.0, "y_m": 2.0}
+        grid.room_labels["office"] = {"name": "Office", "x_m": 8.0, "y_m": 8.0}
+
+        snapshot = RFSensingSnapshot(
+            link_states={
+                "backhaul:11:11->22:22": {
+                    "link_id": "backhaul:11:11->22:22",
+                    "ap_mac": "11:11:11:11:11:11",
+                    "peer_mac": "22:22:22:22:22:22",
+                    "area_id": "office",
+                    "disturbance_score": 75.0,
+                    "is_perturbed": True,
+                }
+            }
+        )
+
+        renderer = HeatmapRenderer(cell_scale=4)
+        png_bytes = renderer.render_rf_links(grid, snapshot)
+        assert isinstance(png_bytes, bytes)
+        assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
 
 # ─── Baseline learner tests ────────────────────────────────────────────────────
 
