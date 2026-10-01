@@ -58,14 +58,23 @@
           "heatmap_enabled": "Enable heatmap generation",
           "anomaly_threshold": "Anomaly detection threshold (z-score)",
           "baseline_days": "Baseline learning window (days)",
-          "vacuum_entities": "Vacuum map entities (optional)"
+          "vacuum_entities": "Vacuum map entities (optional)",
+          "rf_sensing_enabled": "Enable Device-Free RF Motion Sensing",
+          "rf_sensitivity": "RF Sensing Sensitivity",
+          "rf_off_delay": "RF Motion Clear Delay (seconds)",
+          "adaptive_polling": "Adaptive Fast Polling (bursts to 3s when disturbance detected)"
         },
         "data_description": {
           "poll_interval": "How often the background loop updates baselines, vacuum maps, and renders heatmaps (10–3600 seconds).",
           "fast_event_push": "Triggers immediate person localization updates (< 500ms) upon client roaming or CSI motion events without waiting for the polling timer.",
+          "heatmap_enabled": "Enable heatmap generation",
           "anomaly_threshold": "Z-score threshold for object/furniture anomaly alerts. Higher = fewer alerts. Recommended: 3.0.",
           "baseline_days": "Number of days of data used to establish the normal signal baseline.",
-          "vacuum_entities": "Select vacuum map image/camera entities to use for room layout validation."
+          "vacuum_entities": "Select vacuum map image/camera entities to use for room layout validation.",
+          "rf_sensing_enabled": "Monitors Deco wireless backhaul and stationary Wi-Fi devices to detect unassociated human motion without extra hardware.",
+          "rf_sensitivity": "Sensitivity threshold for RF disturbance detection: Low (stricter), Medium (recommended), High (subtle motion).",
+          "rf_off_delay": "Number of seconds of quiet before an area motion sensor turns off (hold-down timer).",
+          "adaptive_polling": "Automatically accelerates router polling to 3-second bursts when movement is in progress, returning to standard interval when quiet."
         }
       },
       "ap_mapping": {
@@ -113,6 +122,9 @@
       },
       "person_coordinates": {
         "name": "Person Coordinates"
+      },
+      "rf_disturbance": {
+        "name": "RF Disturbance"
       }
     },
     "binary_sensor": {
@@ -124,6 +136,9 @@
       },
       "csi_motion": {
         "name": "CSI Motion"
+      },
+      "rf_motion": {
+        "name": "RF Motion"
       }
     },
     "image": {

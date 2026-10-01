@@ -73,6 +73,11 @@ async def async_setup_entry(
                 coordinator, entry, area.id, area.name, hub_device_info
             )
         )
+        entities.append(
+            WiFiSenseRFMotionBinarySensor(
+                coordinator, entry, area.id, area.name, hub_device_info
+            )
+        )
 
     async_add_entities(entities)
 
@@ -346,4 +351,69 @@ class CSIMotionBinarySensor(WiFiSenseBaseBinary):
                 for n in floor_nodes
                 if getattr(n, "motion_detected_value", False)
             ],
+        }
+
+
+class WiFiSenseRFMotionBinarySensor(WiFiSenseBaseBinary):
+    """Device-free RF motion detection for an area using mesh backhaul and stationary Wi-Fi links."""
+
+    _attr_device_class = BinarySensorDeviceClass.MOTION
+    _attr_icon = "mdi:motion-sensor-wireless"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        area_id: str,
+        area_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"rf_motion_{area_id}", device_info)
+        self._area_id = area_id
+        self._area_name = area_name
+        self._attr_name = f"{area_name} RF Motion"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if RF perturbation detected in this area."""
+        data = self.coordinator.data or {}
+        rf_snapshot = data.get("rf_sensing")
+        if rf_snapshot and hasattr(rf_snapshot, "area_motion"):
+            return bool(rf_snapshot.area_motion.get(self._area_id, False))
+        return False
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        rf_snapshot = data.get("rf_sensing")
+        score = 0.0
+        active_links = 0
+        link_details: list[dict[str, Any]] = []
+
+        if rf_snapshot:
+            score = rf_snapshot.area_scores.get(self._area_id, 0.0)
+            active_links = rf_snapshot.area_active_links.get(self._area_id, 0)
+            for link in getattr(rf_snapshot, "link_states", {}).values():
+                if link.get("area_id") == self._area_id:
+                    link_details.append(
+                        {
+                            "link_id": link.get("link_id"),
+                            "type": link.get("link_type"),
+                            "peer_name": link.get("peer_name"),
+                            "rssi": link.get("last_rssi"),
+                            "baseline": link.get("baseline_mean"),
+                            "variance": link.get("last_variance"),
+                            "score": link.get("disturbance_score"),
+                            "perturbed": link.get("is_perturbed"),
+                        }
+                    )
+
+        return {
+            "area_id": self._area_id,
+            "area_name": self._area_name,
+            "disturbance_score": score,
+            "active_links_count": active_links,
+            "sensitivity": self.coordinator.rf_sensitivity,
+            "off_delay_sec": self.coordinator.rf_off_delay,
+            "monitored_links": link_details,
         }

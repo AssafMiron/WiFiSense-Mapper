@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
 
 from .const import (
+    CONF_ADAPTIVE_POLLING,
     CONF_ANOMALY_THRESHOLD,
     CONF_BASELINE_DAYS,
     CONF_DECO_ANCHORS,
@@ -18,15 +19,22 @@ from .const import (
     CONF_HEATMAP_ENABLED,
     CONF_PERSON_TAGS,
     CONF_POLL_INTERVAL,
+    CONF_RF_OFF_DELAY,
+    CONF_RF_SENSING_ENABLED,
+    CONF_RF_SENSITIVITY,
     CONF_ROUTER_HOST,
     CONF_ROUTER_PASSWORD,
     CONF_ROUTER_TYPE,
     CONF_ROUTER_USERNAME,
     CONF_VACUUM_ENTITIES,
+    DEFAULT_ADAPTIVE_POLLING,
     DEFAULT_ANOMALY_THRESHOLD,
     DEFAULT_BASELINE_DAYS,
     DEFAULT_FAST_EVENT_PUSH,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_RF_OFF_DELAY,
+    DEFAULT_RF_SENSING_ENABLED,
+    DEFAULT_RF_SENSITIVITY,
     DOMAIN,
     ROUTER_TYPE_DECO,
     ROUTER_TYPE_NONE,
@@ -319,6 +327,43 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                         custom_value=True,
                     )
                 ),
+                vol.Optional(
+                    CONF_RF_SENSING_ENABLED,
+                    default=current.get(
+                        CONF_RF_SENSING_ENABLED, DEFAULT_RF_SENSING_ENABLED
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_RF_SENSITIVITY,
+                    default=current.get(
+                        CONF_RF_SENSITIVITY, DEFAULT_RF_SENSITIVITY
+                    ),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value="low", label="Low (Stricter, large movement)"
+                            ),
+                            selector.SelectOptionDict(
+                                value="medium", label="Medium (Balanced everyday walking)"
+                            ),
+                            selector.SelectOptionDict(
+                                value="high", label="High (Sensitive subtle motion)"
+                            ),
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_RF_OFF_DELAY,
+                    default=current.get(CONF_RF_OFF_DELAY, DEFAULT_RF_OFF_DELAY),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
+                vol.Optional(
+                    CONF_ADAPTIVE_POLLING,
+                    default=current.get(
+                        CONF_ADAPTIVE_POLLING, DEFAULT_ADAPTIVE_POLLING
+                    ),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="general", data_schema=schema)
