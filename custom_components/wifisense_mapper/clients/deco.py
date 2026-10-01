@@ -797,6 +797,47 @@ class DecoClient(RouterClient):
             sw_ver = node.get("software_ver")
             ip = node.get("device_ip") or node.get("ip") or node.get("ipaddr")
 
+            # Backhaul parsing
+            backhaul_info = node.get("backhaul")
+            b_type = "wifi"
+            b_rssi: int | None = None
+            b_signal: int | None = None
+            b_band: str | None = None
+            parent_raw = node.get("parent_mac") or node.get("master_mac") or node.get("uplink_mac")
+
+            b_sig_raw = None
+            if isinstance(backhaul_info, dict):
+                b_type = str(backhaul_info.get("type") or backhaul_info.get("link_type") or "wifi").lower()
+                b_rssi_field = backhaul_info.get("rssi")
+                b_sig_field = backhaul_info.get("signal_level") or backhaul_info.get("signal")
+                b_band = backhaul_info.get("band")
+                if not parent_raw:
+                    parent_raw = backhaul_info.get("parent_mac") or backhaul_info.get("uplink_mac")
+
+                if b_rssi_field is not None and isinstance(b_rssi_field, (int, float)) and int(b_rssi_field) < 0:
+                    b_rssi = int(b_rssi_field)
+                    b_signal = int(b_sig_field) if b_sig_field is not None and isinstance(b_sig_field, (int, float)) else None
+                elif b_sig_field is not None:
+                    b_sig_raw = b_sig_field
+            elif isinstance(backhaul_info, str):
+                b_type = backhaul_info.lower()
+            else:
+                raw_rssi = node.get("rssi")
+                if raw_rssi is not None and isinstance(raw_rssi, (int, float)) and int(raw_rssi) < 0:
+                    b_rssi = int(raw_rssi)
+                else:
+                    b_sig_raw = node.get("signal_level") or node.get("signal")
+
+            if b_rssi is None and b_sig_raw is not None and isinstance(b_sig_raw, (int, float)):
+                sig_val = int(b_sig_raw)
+                if sig_val < 0:
+                    b_rssi = sig_val
+                elif 1 <= sig_val <= 5:
+                    b_signal = sig_val
+                    b_rssi = -50 if sig_val >= 3 else (-68 if sig_val == 2 else -82)
+
+            parent_mac_norm = self.normalize_mac(str(parent_raw)) if parent_raw else None
+
             result.append(
                 APStats(
                     mac=norm_node_mac,
@@ -808,6 +849,11 @@ class DecoClient(RouterClient):
                         "hardware_ver": hw_ver,
                         "software_ver": sw_ver,
                         "ip": ip,
+                        "backhaul_type": b_type,
+                        "backhaul_rssi": b_rssi,
+                        "backhaul_signal_level": b_signal,
+                        "backhaul_band": b_band,
+                        "parent_mac": parent_mac_norm,
                     },
                 )
             )
@@ -832,6 +878,55 @@ class DecoClient(RouterClient):
                 _LOGGER.debug("LAN MAC fallback failed: %s", exc)
 
         return result
+
+    async def async_get_backhaul_links(self) -> list[dict[str, Any]]:
+        """Extract wireless mesh backhaul links between Deco nodes."""
+        aps = await self.async_get_ap_stats()
+        if not aps or len(aps) <= 1:
+            return []
+
+        master_ap = next(
+            (
+                a for a in aps
+                if (a.extra.get("role") and str(a.extra["role"]).lower() in ("master", "main"))
+                or "master" in (a.name or "").lower()
+                or "main" in (a.name or "").lower()
+            ),
+            aps[0],
+        )
+
+        links: list[dict[str, Any]] = []
+        for ap in aps:
+            extra = ap.extra
+            role = str(extra.get("role") or "").lower()
+            if ap.mac == master_ap.mac or role in ("master", "main"):
+                continue
+
+            b_type = str(extra.get("backhaul_type") or "wifi").lower()
+            if "eth" in b_type:
+                # Wired backhaul, ignore for RF perturbation
+                continue
+
+            parent_mac = extra.get("parent_mac") or master_ap.mac
+            rssi = extra.get("backhaul_rssi")
+            if rssi is None:
+                sig_level = extra.get("backhaul_signal_level") or 3
+                rssi = -50 if sig_level >= 3 else (-68 if sig_level == 2 else -82)
+
+            links.append(
+                {
+                    "satellite_mac": ap.mac,
+                    "satellite_name": ap.name,
+                    "parent_mac": parent_mac,
+                    "area_id": ap.area_id,
+                    "rssi": rssi,
+                    "signal_level": extra.get("backhaul_signal_level"),
+                    "band": extra.get("backhaul_band"),
+                    "type": "wifi",
+                }
+            )
+
+        return links
 
     async def async_disconnect(self) -> None:
         """No persistent session to close for Deco."""

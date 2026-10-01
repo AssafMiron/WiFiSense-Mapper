@@ -545,3 +545,51 @@ def test_deco_client_parses_node_nicknames_and_various_signals() -> None:
     assert c3.rssi == -62
 
 
+@pytest.mark.asyncio
+async def test_deco_async_get_backhaul_links() -> None:
+    """Test extracting wireless mesh backhaul links between Deco nodes."""
+    client = DecoClient("192.168.0.1", "admin", "secret_pass")
+    client._connected = True
+    client._client = MagicMock()
+
+    # Mock Deco nodes with one master and one wireless satellite
+    nodes = [
+        {
+            "mac": "11:11:11:11:11:11",
+            "nickname": "Main Deco",
+            "role": "master",
+            "device_model": "Deco X50",
+        },
+        {
+            "mac": "22:22:22:22:22:22",
+            "nickname": "Living Room Deco",
+            "role": "satellite",
+            "parent_mac": "11:11:11:11:11:11",
+            "backhaul": {
+                "type": "wifi",
+                "signal_level": 3,
+                "rssi": -64,
+                "band": "5GHz",
+            },
+        },
+        {
+            "mac": "33:33:33:33:33:33",
+            "nickname": "Basement Deco",
+            "role": "satellite",
+            "backhaul": "ethernet",
+        },
+    ]
+
+    client._fetch_deco_nodes = MagicMock(return_value=nodes)
+    client._get_clients_sync = MagicMock(return_value=[])
+
+    links = await client.async_get_backhaul_links()
+    assert len(links) == 1
+    link = links[0]
+    assert link["satellite_mac"] == "22:22:22:22:22:22"
+    assert link["parent_mac"] == "11:11:11:11:11:11"
+    assert link["rssi"] == -64
+    assert link["type"] == "wifi"
+    assert link["band"] == "5GHz"
+
+
