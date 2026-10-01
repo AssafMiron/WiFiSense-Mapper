@@ -23,11 +23,12 @@ WiFiSense Mapper is a **glue layer** — it fuses telemetry from your mesh route
 
 | Feature | Description |
 |---------|-------------|
+| **Device-Free RF Motion Sensing** | Detects people walking in a room even without phones by monitoring signal perturbations on Deco wireless backhaul and stationary Wi-Fi IoT links. |
 | **Auto-Discovery & 1-Click Setup** | Auto-detects configured TP-Link Deco & UniFi integrations in HA for zero-credential onboarding. |
 | **Router Telemetry** | Connects to TP-Link Deco (local API) or bridges via existing UniFi integrations. |
-| **ESP32 CSI Sensing** | Auto-discovers ESPectre and TOMMY nodes via ESPHome or MQTT for device-free motion. |
+| **ESP32 CSI Sensing** | Auto-discovers ESPectre and TOMMY nodes via ESPHome or MQTT for subcarrier-level motion. |
 | **HA-Native Setup** | Automatically maps to your existing Home Assistant Floors and Areas registries. |
-| **2D Floor Heatmaps** | Generates 4 visual heatmap layers (Signal, Variance, Motion, Anomaly) as PNG image entities. |
+| **2D Floor Heatmaps** | Generates 5 visual layers (Signal, Variance, Motion, Anomaly, and RF Link rays) as PNG image entities. |
 | **Smart Anomaly Detection** | Learns baseline room signal patterns to detect when furniture or large objects are moved. |
 | **Room-Level Tracking** | Tracks connected WiFi devices by room based on Access Point association. |
 | **Vacuum Map Alignment** | Optional alignment with Roborock, Valetudo, and Dreame map boundaries. |
@@ -49,8 +50,9 @@ WiFiSense Mapper is a **glue layer** — it fuses telemetry from your mesh route
 
 - **Home Assistant** 2024.1 or newer
 - **At least one telemetry source:**
-  - **ESP32 CSI nodes** running ESPectre or TOMMY (*strongly recommended for device-free motion & security*)
-  - **Mesh router** (TP-Link Deco or UniFi)
+  - **TP-Link Deco Mesh router** (supports device-free RF motion detection, wireless backhaul tracking, & client presence)
+  - **ESP32 CSI nodes** running ESPectre or TOMMY (for subcarrier physical-layer CSI motion)
+  - **UniFi Network** (bridges via HA UniFi integration)
 - **Recommended:**
   - Floors and Areas configured in Home Assistant (**Settings → Areas & Zones**)
 - **Optional:**

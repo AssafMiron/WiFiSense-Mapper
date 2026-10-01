@@ -11,6 +11,7 @@ Binary sensors provide on/off signals for automations, alerts, and security syst
 | Entity ID | Device Class | State (`on`/`off`) | Description |
 |---|---|---|---|
 | `binary_sensor.{area}_presence` | `presence` | `on` = Presence detected | Fused presence indicator. Fires if any WiFi client is associated to this area's AP or if CSI nodes in this area detect motion. |
+| `binary_sensor.{area}_rf_motion` | `motion` | `on` = Motion detected | **Device-Free RF Motion Sensing**. Triggers when human movement perturbs Deco wireless backhaul or stationary Wi-Fi IoT links in this room (works even without phones). |
 | `binary_sensor.{floor}_csi_motion` | `motion` | `on` = Motion detected | Aggregated ESP32 CSI motion for the entire floor. Triggers on Doppler / subcarrier disruptions. |
 | `binary_sensor.{floor}_object_anomaly` | `problem` | `on` = Anomaly active | Triggers when the spatial anomaly z-score exceeds the configured threshold vs. the learned baseline. |
 
@@ -22,6 +23,25 @@ devices:
   - "iPhone-15"
   - "MacBook-Pro"
   - "aa:bb:cc:dd:ee:ff"
+```
+
+### RF Motion Binary Sensor Attributes
+```yaml
+area_id: living_room
+area_name: Living Room
+disturbance_score: 74.5
+active_links_count: 3
+sensitivity: medium
+off_delay_sec: 30
+monitored_links:
+  - link_id: "backhaul:11:11:11:11:11:11->22:22:22:22:22:22"
+    type: backhaul
+    peer_name: Living Room Deco
+    rssi: -78
+    baseline: -65.0
+    variance: 8.4
+    score: 74.5
+    perturbed: true
 ```
 
 ### Anomaly Binary Sensor Attributes
@@ -41,6 +61,7 @@ Sensor entities provide numeric values and signal strength measurements for dash
 
 | Entity ID | Unit | State Class | Description |
 |---|---|---|---|
+| `sensor.{area}_rf_disturbance` | `%` | `measurement` | Real-time RF signal disturbance percentage (0–100%) indicating line-of-sight obstruction in this room. |
 | `sensor.{floor}_wifi_client_count` | `clients` | `measurement` | Total count of associated WiFi client devices on this floor. |
 | `sensor.{ap_name}_average_rssi` | `dBm` | `measurement` | Average signal strength across all clients connected to this specific AP. |
 | `sensor.{node}_motion_score` | `score` | `measurement` | Real-time CSI motion score reported by an ESPectre or TOMMY node. |
@@ -58,6 +79,7 @@ Heatmap layers are rendered as 2D PNG images and exposed as standard Home Assist
 | `image.{floor}_variance_heatmap` | `variance` | Signal variance identifying RF shadows and structural obstructions. |
 | `image.{floor}_motion_heatmap` | `motion` | Multi-node CSI motion intensity. |
 | `image.{floor}_anomaly_heatmap` | `anomaly` | Heatmap of anomalous cells deviating from learned baseline. |
+| `image.{floor}_rf_links_heatmap` | `rf_links` | Real-time RF link rays between Deco nodes and stationary IoT devices (green = clear, orange/red = perturbed). |
 
 ### Accessing Image Streams:
 You can directly use the image URL inside Lovelace cards:

@@ -65,6 +65,16 @@ flowchart TD
 * Uses a 2D Affine Transformation matrix ($3 \times 3$) computed via least-squares over $\ge 3$ non-collinear calibration points:
   $$\begin{bmatrix} x_{grid} \\ y_{grid} \\ 1 \end{bmatrix} = \begin{bmatrix} a & b & t_x \\ c & d & t_y \\ 0 & 0 & 1 \end{bmatrix} \begin{bmatrix} x_{vac} \\ y_{vac} \\ 1 \end{bmatrix}$$
 
+### 2.5 Device-Free RF Motion Sensing Engine (`engine/rf_sensing.py`)
+* **Stationary Anchor Classification**: Identifies zero-roaming client devices (smart plugs, smart speakers, TVs) that maintain 24/7 connectivity, filtering out mobile phones.
+* **Rolling Baseline Tracking**: Learns undisturbed RF multipath signal distribution ($\mu_{\text{base}}, \sigma_{\text{base}}$) per link over a moving window of quiet samples, automatically freezing adaptation during transient human crossings.
+* **Disturbance Scoring**:
+  $$S_{\text{link}} = w_z \frac{|RSSI - \mu_{\text{base}}|}{\max(\sigma_{\text{base}}, 1.0)} + w_v \frac{\text{Var}(RSSI)}{15.0}$$
+* **Hysteresis & Area Arbitration**:
+  * Triggers `binary_sensor.{area}_rf_motion` on $\ge 2$ consecutive abnormal samples.
+  * Hold-down timer maintains `on` state for `rf_off_delay` seconds (default 30s) after motion ceases.
+  * Adaptive burst mode accelerates router polling to 3-second intervals during active motion events.
+
 ---
 
 ## 3. Lovelace Dashboard Visualization

@@ -60,11 +60,16 @@ The onboarding UI and credential adoption will automatically adapt without modif
 
 ## 3. Options Flow (Configuration Settings)
 
-After setup, you can adjust options anytime by going to **Settings → Devices & Services → WiFiSense Mapper → Configure**:
-
 | Setting | Parameter | Default | Range | Description |
 |---|---|---|---|---|
-| **Poll Interval** | `poll_interval` | `30s` | `10s` – `3600s` | How often router client states and CSI metrics are queried and processed. |
+| **RF Motion Sensing** | `rf_sensing_enabled` | `true` | On / Off | Enable device-free RF motion detection using Deco wireless backhaul and stationary Wi-Fi IoT devices. |
+| **RF Sensitivity** | `rf_sensitivity` | `medium` | Low / Med / High | RF perturbation threshold: Low (stricter, large body movement), Medium (recommended), High (subtle motion). |
+| **RF Clear Delay** | `rf_off_delay` | `30s` | `5s` – `300s` | Hold-down time of quiet signal before `binary_sensor.{area}_rf_motion` returns to `off`. |
+| **Adaptive Fast Polling** | `adaptive_polling` | `true` | On / Off | Automatically bursts polling to 3-second intervals when motion is in progress, returning to standard interval when quiet. |
+| **Fast Event Push** | `fast_event_push` | `true` | On / Off | Triggers immediate person localization updates (< 500ms) upon client roaming or CSI motion events without waiting for polling. |
+| **Deco Spatial Anchors** | `deco_anchors` | `{}` | Per-Node Config | Assign each Deco node to a physical Home Assistant Area and set its X/Y percentage position on the floor map. |
+| **Person Tag Mapping** | `person_tags` | `{}` | Per-Person Config | Assign discovered WiFi clients (smartwatches, phones, BLE/CSI tags) to HA Person entities for room tracking. |
+| **Poll Interval** | `poll_interval` | `60s` | `10s` – `3600s` | How often the background spatial loop updates baselines, vacuum maps, and renders heatmaps. |
 | **Heatmap Generation** | `heatmap_enabled` | `true` | On / Off | Enable or disable 2D PNG heatmap rendering. (Disable on low-power devices if heatmaps are not used). |
 | **Anomaly Threshold** | `anomaly_threshold` | `3.0 σ` | `0.5` – `10.0` | Z-score sensitivity for object anomaly detection. Higher = fewer alerts, lower = more sensitive. |
 | **Baseline Learning Window** | `baseline_days` | `7 days` | `1` – `30` | Number of days of historical data used for the rolling EWMA signal baseline. |
