@@ -44,6 +44,11 @@ CONF_ANOMALY_THRESHOLD: Final = "anomaly_threshold"
 CONF_BASELINE_DAYS: Final = "baseline_days"
 CONF_FAST_EVENT_PUSH: Final = "fast_event_push"
 CONF_DECO_ANCHORS: Final = "deco_anchors"  # dict[ap_mac/name -> dict[area_id, floor_id, x_pct, y_pct]]
+CONF_RF_SENSING_ENABLED: Final = "rf_sensing_enabled"
+CONF_RF_SENSITIVITY: Final = "rf_sensitivity"  # "low", "medium", "high"
+CONF_RF_OFF_DELAY: Final = "rf_off_delay"  # seconds
+CONF_ADAPTIVE_POLLING: Final = "adaptive_polling"
+CONF_STATIONARY_DEVICES: Final = "stationary_devices"  # list of MACs to treat as stationary
 
 # ─── Activity states ──────────────────────────────────────────────────────────
 
@@ -61,6 +66,10 @@ DEFAULT_ANOMALY_THRESHOLD: Final = 3.0  # z-score
 DEFAULT_BASELINE_DAYS: Final = 7
 DEFAULT_GRID_RESOLUTION: Final = 0.5  # meters per cell
 DEFAULT_HEATMAP_ENABLED: Final = True
+DEFAULT_RF_SENSING_ENABLED: Final = True
+DEFAULT_RF_SENSITIVITY: Final = "medium"
+DEFAULT_RF_OFF_DELAY: Final = 30  # seconds
+DEFAULT_ADAPTIVE_POLLING: Final = True
 
 # ─── Router types ─────────────────────────────────────────────────────────────
 
@@ -121,6 +130,7 @@ LAYER_VARIANCE: Final = "variance"
 LAYER_MOTION: Final = "motion"
 LAYER_ANOMALY: Final = "anomaly"
 LAYER_COVERAGE: Final = "coverage"
+LAYER_RF_LINKS: Final = "rf_links"
 
 HEATMAP_LAYERS: Final = [
     LAYER_SIGNAL,
@@ -128,6 +138,7 @@ HEATMAP_LAYERS: Final = [
     LAYER_MOTION,
     LAYER_ANOMALY,
     LAYER_COVERAGE,
+    LAYER_RF_LINKS,
 ]
 
 # ─── Service names ────────────────────────────────────────────────────────────
