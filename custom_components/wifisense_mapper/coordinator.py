@@ -1011,7 +1011,11 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 1. Feed Deco backhaul links if router client supports it
         if self.router_client and hasattr(self.router_client, "async_get_backhaul_links"):
             try:
-                backhaul_links = await self.router_client.async_get_backhaul_links()
+                cached_aps = list(self.ap_stats.values()) if self.ap_stats else None
+                try:
+                    backhaul_links = await self.router_client.async_get_backhaul_links(aps=cached_aps)
+                except TypeError:
+                    backhaul_links = await self.router_client.async_get_backhaul_links()
                 for b_link in backhaul_links:
                     sat_mac = b_link["satellite_mac"]
                     parent_mac = b_link["parent_mac"]

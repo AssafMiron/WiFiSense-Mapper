@@ -879,9 +879,12 @@ class DecoClient(RouterClient):
 
         return result
 
-    async def async_get_backhaul_links(self) -> list[dict[str, Any]]:
+    async def async_get_backhaul_links(
+        self, aps: list[APStats] | None = None
+    ) -> list[dict[str, Any]]:
         """Extract wireless mesh backhaul links between Deco nodes."""
-        aps = await self.async_get_ap_stats()
+        if aps is None:
+            aps = await self.async_get_ap_stats()
         if not aps or len(aps) <= 1:
             return []
 
