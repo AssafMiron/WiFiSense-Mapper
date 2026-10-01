@@ -29,9 +29,10 @@ WiFiSense Mapper is a **glue layer** — it fuses telemetry from your mesh route
 | **ESP32 CSI Sensing** | Auto-discovers ESPectre and TOMMY nodes via ESPHome or MQTT for subcarrier-level motion. |
 | **HA-Native Setup** | Automatically maps to your existing Home Assistant Floors and Areas registries. |
 | **2D Floor Heatmaps** | Generates 5 visual layers (Signal, Variance, Motion, Anomaly, and RF Link rays) as PNG image entities. |
+| **Deco Spatial Anchors & Vacuum Fusion** | Configure physical router coordinates on floorplans with automatic Roborock/Valetudo room centroid alignment. |
 | **Smart Anomaly Detection** | Learns baseline room signal patterns to detect when furniture or large objects are moved. |
-| **Room-Level Tracking** | Tracks connected WiFi devices by room based on Access Point association. |
-| **Vacuum Map Alignment** | Optional alignment with Roborock, Valetudo, and Dreame map boundaries. |
+| **Person & Room-Level Tracking** | Maps WiFi devices/wearables to HA Person entities with real-time room location, activity states, confidence, and dwell times. |
+| **Interactive Options Flow** | Comprehensive 6-section UI menu for adjusting sensitivities, AP areas, anchors, person tags, and live diagnostics. |
 | **HACS Ready** | Full UI configuration flow, options flow, and custom services. |
 
 ---

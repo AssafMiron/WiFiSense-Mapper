@@ -66,6 +66,10 @@ Sensor entities provide numeric values and signal strength measurements for dash
 | `sensor.{ap_name}_average_rssi` | `dBm` | `measurement` | Average signal strength across all clients connected to this specific AP. |
 | `sensor.{node}_motion_score` | `score` | `measurement` | Real-time CSI motion score reported by an ESPectre or TOMMY node. |
 | `sensor.{floor}_anomaly_score` | `σ` (z-score) | `measurement` | Maximum statistical deviation score across all grid cells on this floor. |
+| `sensor.{person}_location` | — | — | Current room / area for a tracked person (e.g. `Living Room`, `Away`, or `Living Room → Kitchen` during transitions). |
+| `sensor.{person}_activity` | — | — | Current physical state (`Stationary / Sitting`, `Walking / Moving`, `Room Transitioning`, or `Away`). |
+| `sensor.{person}_confidence` | `%` | `measurement` | Confidence percentage of the room estimation based on RSSI margins, CSI, and dwell time. |
+| `sensor.{person}_dwell_time` | `s` | `total` | Time in seconds the person has remained within their current room. |
 
 ---
 
@@ -91,11 +95,12 @@ You can directly use the image URL inside Lovelace cards:
 
 ## 4. Device Trackers (`device_tracker.*`)
 
-WiFiSense Mapper creates room-level device trackers for connected WiFi devices (up to 50 active clients):
+WiFiSense Mapper provides room-level device tracking for individual Wi-Fi clients and mapped persons:
 
 | Entity ID | State | Source Type | Description |
 |---|---|---|---|
-| `device_tracker.{hostname_or_mac}` | `{area_name}` / `not_home` | `router` | Position of the device based on its connected Access Point and area assignment. |
+| `device_tracker.{person}_wifi` | `{area_name}` / `not_home` | `router` | Position of a tracked Person mapped via the Person Tracking options flow. Attached directly to the Person's unified HA device. |
+| `device_tracker.{hostname_or_mac}` | `{area_name}` / `not_home` | `router` | Position of an individual WiFi client based on connected AP proximity and area assignment (opt-in or when tagged). |
 
 > [!NOTE]
-> Device tracking operates at **room-level** granularity (AP proximity), not GPS accuracy. Devices in deep sleep may report stale locations until active WiFi traffic resumes.
+> Device tracking operates at **room-level** granularity (AP proximity), not GPS accuracy. Devices in deep sleep may report stale locations until active WiFi traffic resumes. Trackers for untagged devices are kept disabled by default to avoid entity explosion on large home networks.

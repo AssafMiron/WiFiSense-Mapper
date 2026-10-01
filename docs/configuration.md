@@ -60,20 +60,78 @@ The onboarding UI and credential adoption will automatically adapt without modif
 
 ## 3. Options Flow (Configuration Settings)
 
+Once configured, click **Configure** on the WiFiSense Mapper card in **Settings → Devices & Services** to open the interactive settings menu. The options flow is organized into 6 distinct management sections:
+
+```mermaid
+flowchart TD
+    Menu["Options Flow Menu"] --> General["1. General Settings"]
+    Menu --> Anchors["2. Deco Spatial Anchors"]
+    Menu --> Person["3. Person Tracking & Wearables"]
+    Menu --> APMap["4. AP to Area Mapping"]
+    Menu --> VacMap["5. Vacuum Room Mapping"]
+    Menu --> Troubleshoot["6. System Health & Troubleshooting"]
+```
+
+### 1. General Settings (`general`)
+Controls polling cadences, detection algorithms, and sensitivity thresholds:
+
 | Setting | Parameter | Default | Range | Description |
 |---|---|---|---|---|
-| **RF Motion Sensing** | `rf_sensing_enabled` | `true` | On / Off | Enable device-free RF motion detection using Deco wireless backhaul and stationary Wi-Fi IoT devices. |
-| **RF Sensitivity** | `rf_sensitivity` | `medium` | Low / Med / High | RF perturbation threshold: Low (stricter, large body movement), Medium (recommended), High (subtle motion). |
-| **RF Clear Delay** | `rf_off_delay` | `30s` | `5s` – `300s` | Hold-down time of quiet signal before `binary_sensor.{area}_rf_motion` returns to `off`. |
-| **Adaptive Fast Polling** | `adaptive_polling` | `true` | On / Off | Automatically bursts polling to 3-second intervals when motion is in progress, returning to standard interval when quiet. |
+| **RF Motion Sensing** | `rf_sensing_enabled` | `true` | On / Off | Enable device-free RF motion detection using Deco wireless mesh backhauls and stationary Wi-Fi IoT devices. |
+| **RF Sensitivity** | `rf_sensitivity` | `medium` | Low / Med / High | Perturbation threshold: `Low` (stricter, large body movement), `Medium` (balanced everyday walking), `High` (subtle motion). |
+| **RF Clear Delay** | `rf_off_delay` | `30s` | `5s` – `300s` | Hold-down time of clean signal before `binary_sensor.{area}_rf_motion` clears back to `off`. |
+| **Adaptive Fast Polling** | `adaptive_polling` | `true` | On / Off | Automatically bursts polling to 3-second intervals during detected active motion, restoring standard intervals when quiet. |
 | **Fast Event Push** | `fast_event_push` | `true` | On / Off | Triggers immediate person localization updates (< 500ms) upon client roaming or CSI motion events without waiting for polling. |
-| **Deco Spatial Anchors** | `deco_anchors` | `{}` | Per-Node Config | Assign each Deco node to a physical Home Assistant Area and set its X/Y percentage position on the floor map. |
-| **Person Tag Mapping** | `person_tags` | `{}` | Per-Person Config | Assign discovered WiFi clients (smartwatches, phones, BLE/CSI tags) to HA Person entities for room tracking. |
-| **Poll Interval** | `poll_interval` | `60s` | `10s` – `3600s` | How often the background spatial loop updates baselines, vacuum maps, and renders heatmaps. |
-| **Heatmap Generation** | `heatmap_enabled` | `true` | On / Off | Enable or disable 2D PNG heatmap rendering. (Disable on low-power devices if heatmaps are not used). |
-| **Anomaly Threshold** | `anomaly_threshold` | `3.0 σ` | `0.5` – `10.0` | Z-score sensitivity for object anomaly detection. Higher = fewer alerts, lower = more sensitive. |
+| **Poll Interval** | `poll_interval` | `60s` | `10s` – `3600s` | Background spatial loop interval for baseline learning, vacuum map alignment, and periodic heatmap refresh. |
+| **Heatmap Generation** | `heatmap_enabled` | `true` | On / Off | Enable or disable 2D PNG heatmap rendering. (Disable on low-power hosts like Raspberry Pi 3 if heatmaps are not needed). |
+| **Anomaly Threshold** | `anomaly_threshold` | `3.0 σ` | `0.5` – `10.0` | Z-score statistical threshold for object anomaly detection. Higher = fewer alerts, lower = more sensitive to displaced obstacles. |
 | **Baseline Learning Window** | `baseline_days` | `7 days` | `1` – `30` | Number of days of historical data used for the rolling EWMA signal baseline. |
 | **Vacuum Map Entities** | `vacuum_entities` | `[]` | Multi-select | Select camera or image map entities from Roborock, Valetudo, or Dreame integrations. |
+
+---
+
+### 2. Deco Spatial Anchors (`deco_anchors`)
+Configure physical router positions to anchor signal models and 2D floorplan heatmaps:
+* **Room / Area Selection**: Assign each discovered Deco Access Point to a Home Assistant Area.
+* **X Position (%)**: Horizontal placement percentage from the left border of the floor (0%–100%).
+* **Y Position (%)**: Vertical placement percentage from the top border of the floor (0%–100%).
+* **Vacuum Map Integration**: If robot vacuum map features are parsed, room segments are displayed alongside areas (e.g. `[🧹 Vacuum: Living Room]`) and router coordinates auto-suggest the room's calculated centroid.
+
+---
+
+### 3. Person Tracking & Wearables (`person_tags`)
+Map individual WiFi client devices (smartphones, smartwatches, tablets, BLE tags) to Home Assistant `person.*` entities:
+* Select any detected WiFi client from the populated device list (with hostnames, MAC addresses, and vendors).
+* Assign the client to a Home Assistant Person (e.g., `John (person.john)`).
+* Creates unified tracking entities under that Person:
+  * `sensor.{person}_location` (Room location, "Away", or transition direction)
+  * `sensor.{person}_activity` (`Stationary / Sitting`, `Walking / Moving`, `Room Transitioning`, `Away`)
+  * `sensor.{person}_confidence` (Localization confidence score %)
+  * `sensor.{person}_dwell_time` (Seconds elapsed in the current room)
+  * `device_tracker.{person}_wifi` (Device tracker attached to the person)
+
+---
+
+### 4. AP to Area Mapping (`ap_mapping`)
+Directly map mesh router units and Access Points to Home Assistant Areas:
+* Assign each AP to an Area from the dropdown menu.
+* **Overwrite HA Device Areas (`overwrite_ha_device_areas`)**: When checked, automatically synchronizes Home Assistant's Core Device Registry so the router device itself is assigned to the selected Area.
+
+---
+
+### 5. Vacuum Room Mapping (`vacuum_mapping`)
+Link parsed robot vacuum map rooms to Home Assistant Areas:
+* Associates vacuum room segment IDs (e.g. Roborock segment 16, 17) with Home Assistant Areas (`living_room`, `kitchen`).
+* Enables the spatial engine to constrain signal propagation, clip heatmaps to walls, and automatically compute room centroids for Access Points.
+
+---
+
+### 6. System Health & Diagnostics (`troubleshooting`)
+A live diagnostics and troubleshooting dashboard embedded directly inside the Options Flow:
+* **Pillow Status**: Displays whether Pillow is active (`✅ Installed (v10.x)`) or if the built-in pure-Python fallback renderer is operating.
+* **Router Status**: Real-time connection health (`✅ Connected` vs `⚠️ Disconnected / Not Polled`).
+* **Area Coverage Diagnostics**: Summary of RF coverage across your home (e.g., `4/5 Areas Covered (3 Cross-covered)`).
+* **Recent Live Logs**: Displays the last 25 coordinator log entries directly within the UI dialog for immediate debugging without needing shell access or log downloads.
 
 ---
 
