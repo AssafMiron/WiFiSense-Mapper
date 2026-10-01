@@ -66,6 +66,27 @@ def test_rolling_baseline_tracker() -> None:
     assert link.baseline_mean == old_mean  # Should NOT adapt during perturbation
 
 
+def test_baseline_not_contaminated_by_perturbation() -> None:
+    """Verify sudden RSSI perturbation spikes are excluded from baseline tracker."""
+    detector = RFPerturbationDetector(sensitivity="medium")
+    sat = "22:22:22:22:22:22"
+    parent = "11:11:11:11:11:11"
+
+    # Establish quiet baseline at -60 dBm
+    for i in range(10):
+        detector.feed_backhaul_sample(sat, parent, -60, now=100.0 + i)
+
+    link = detector.links[f"backhaul:{parent}->{sat}"]
+    assert -60.1 <= link.baseline_mean <= -59.9
+
+    # Sharp disturbance spike arrives
+    detector.feed_backhaul_sample(sat, parent, -88, now=120.0)
+
+    # Baseline samples must NOT have absorbed the spike -88
+    assert -88 not in link.baseline_samples
+    assert link.baseline_mean == -60.0
+
+
 def test_rf_perturbation_detection_and_area_hysteresis() -> None:
     """Test full RF perturbation detection, scoring, and area motion triggering."""
     detector = RFPerturbationDetector(

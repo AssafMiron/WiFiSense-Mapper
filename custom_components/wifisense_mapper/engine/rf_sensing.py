@@ -298,8 +298,9 @@ class RFPerturbationDetector:
         link.last_seen = ts
         link.recent_samples.append((ts, rssi))
 
-        # 1. Update baseline if appropriate
-        self.baseline_tracker.update_link_baseline(link, rssi)
+        # 1. Seed baseline if insufficient samples
+        if len(link.baseline_samples) < 2:
+            self.baseline_tracker.update_link_baseline(link, rssi)
 
         # 2. Compute sliding window variance (over last 4 to 8 samples)
         recent_rssis = [val for _, val in link.recent_samples]
@@ -338,6 +339,10 @@ class RFPerturbationDetector:
             link.consecutive_hits = 0
             link.is_perturbed = False
 
+        # 5. Update baseline only when link is quiet and not actively perturbed
+        if len(link.baseline_samples) >= 2 and not is_hit and not link.is_perturbed:
+            self.baseline_tracker.update_link_baseline(link, rssi)
+
     def evaluate_areas(self, now: float | None = None) -> RFSensingSnapshot:
         """Aggregate link states into area disturbance scores and presence flags."""
         ts = now if now is not None else time.time()
@@ -356,32 +361,25 @@ class RFPerturbationDetector:
 
             aid = link.area_id
             area_active_links[aid] = area_active_links.get(aid, 0) + 1
-            current_max = area_max_scores.get(aid, 0.0)
-            if link.disturbance_score > current_max:
+            if aid not in area_max_scores or link.disturbance_score > area_max_scores[aid]:
                 area_max_scores[aid] = link.disturbance_score
 
             if link.is_perturbed:
                 area_has_hit[aid] = True
                 has_any_perturbation = True
 
-        _, _, trigger_thresh, _ = SENSITIVITY_PROFILES.get(
-            self.sensitivity, SENSITIVITY_PROFILES["medium"]
-        )
+        all_monitored_areas = set(area_max_scores.keys()) | set(self._area_motion.keys())
 
         # Update area presence with hysteresis and hold-down timer
-        for aid, score in area_max_scores.items():
+        for aid in all_monitored_areas:
+            score = area_max_scores.get(aid, 0.0)
             self._area_scores[aid] = score
-            is_hit = area_has_hit.get(aid, False) or (score >= trigger_thresh)
+            is_perturbed = area_has_hit.get(aid, False)
 
-            if is_hit:
-                self._area_consecutive_hits[aid] = (
-                    self._area_consecutive_hits.get(aid, 0) + 1
-                )
-                if self._area_consecutive_hits[aid] >= self.min_consecutive:
-                    self._area_motion[aid] = True
-                    self._area_last_motion_time[aid] = ts
+            if is_perturbed:
+                self._area_motion[aid] = True
+                self._area_last_motion_time[aid] = ts
             else:
-                self._area_consecutive_hits[aid] = 0
                 last_time = self._area_last_motion_time.get(aid, 0.0)
                 if ts - last_time >= self.off_delay_sec:
                     self._area_motion[aid] = False
