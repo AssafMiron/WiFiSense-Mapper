@@ -119,3 +119,40 @@ def test_resolve_floor_for_client_uses_ap(mock_config_entry_no_router, mock_ap_s
     client = ClientInfo(mac="aa:bb:cc", ap_mac="de:ad:be:ef:00:01")
     floor = coord._resolve_floor_for_client(client)
     assert floor == "ground_floor"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rf_sensing_integration(mock_config_entry_deco):
+    """Test coordinator feeds backhaul and stationary clients to RF detector."""
+    hass = MagicMock()
+    hass.async_add_executor_job = AsyncMock(return_value=b"PNG")
+    hass.states.get = MagicMock(return_value=None)
+
+    router_client = MagicMock()
+    router_client.async_get_clients = AsyncMock(return_value=[])
+    router_client.async_get_ap_stats = AsyncMock(return_value=[])
+    router_client.async_get_backhaul_links = AsyncMock(
+        return_value=[
+            {
+                "satellite_mac": "22:22:22:22:22:22",
+                "satellite_name": "Living Room Deco",
+                "parent_mac": "11:11:11:11:11:11",
+                "area_id": "living_room",
+                "rssi": -65,
+                "type": "wifi",
+            }
+        ]
+    )
+
+    coord = WiFiSenseCoordinator(hass, mock_config_entry_deco, router_client)
+    coord.grids["default"] = SpatialGrid("default")
+    coord.baselines["default"] = BaselineLearner("default")
+
+    # Run update
+    data = await coord._async_update_data()
+    assert "rf_sensing" in data
+    snapshot = data["rf_sensing"]
+    assert "backhaul:11:11:11:11:11:11->22:22:22:22:22:22" in snapshot.link_states
+    link_info = snapshot.link_states["backhaul:11:11:11:11:11:11->22:22:22:22:22:22"]
+    assert link_info["area_id"] == "living_room"
+    assert link_info["last_rssi"] == -65
