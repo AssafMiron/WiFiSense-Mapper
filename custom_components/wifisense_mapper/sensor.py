@@ -655,13 +655,14 @@ class WifiSensePersonDistanceSensor(WiFiSenseBaseSensor):
         }
 
 
-class AreaRFDisturbanceSensor(CoordinatorEntity[WiFiSenseCoordinator], SensorEntity):
+class AreaRFDisturbanceSensor(WiFiSenseBaseSensor):
     """Sensor reporting the RF disturbance and variance score for an area."""
 
-    _attr_has_entity_name = True
     _attr_native_unit_of_measurement = "%"
     _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
     _attr_icon = "mdi:waveform"
+    _attr_translation_key = "rf_disturbance"
 
     def __init__(
         self,
@@ -671,13 +672,11 @@ class AreaRFDisturbanceSensor(CoordinatorEntity[WiFiSenseCoordinator], SensorEnt
         area_name: str,
         device_info: DeviceInfo,
     ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
+        super().__init__(coordinator, entry, f"rf_disturbance_{area_id}", device_info)
         self._area_id = area_id
         self._area_name = area_name
-        self._attr_unique_id = f"{entry.entry_id}_rf_disturbance_{area_id}"
         self._attr_name = f"{area_name} RF Disturbance"
-        self._attr_device_info = device_info
+        self._attr_suggested_area = area_name
 
     @property
     def native_value(self) -> float:

@@ -359,6 +359,7 @@ class WiFiSenseRFMotionBinarySensor(WiFiSenseBaseBinary):
 
     _attr_device_class = BinarySensorDeviceClass.MOTION
     _attr_icon = "mdi:motion-sensor-wireless"
+    _attr_translation_key = "rf_motion"
 
     def __init__(
         self,
@@ -372,6 +373,7 @@ class WiFiSenseRFMotionBinarySensor(WiFiSenseBaseBinary):
         self._area_id = area_id
         self._area_name = area_name
         self._attr_name = f"{area_name} RF Motion"
+        self._attr_suggested_area = area_name
 
     @property
     def is_on(self) -> bool:

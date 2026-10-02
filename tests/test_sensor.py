@@ -300,6 +300,8 @@ class TestMultiApMeshCoverageSensor:
         )
 
         assert sensor.native_value == 74.5
+        assert sensor._attr_suggested_area == "Living Room"
+        assert sensor.suggested_display_precision == 1
         attrs = sensor.extra_state_attributes
         assert attrs["motion_detected"] is True
         assert attrs["active_links_count"] == 2
@@ -341,6 +343,7 @@ class TestMultiApMeshCoverageSensor:
         )
 
         assert binary_sensor.is_on is True
+        assert binary_sensor._attr_suggested_area == "Office"
         attrs = binary_sensor.extra_state_attributes
         assert attrs["disturbance_score"] == 68.0
         assert attrs["active_links_count"] == 1
