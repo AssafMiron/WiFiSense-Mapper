@@ -145,14 +145,14 @@ class StationaryDeviceClassifier:
         if norm_mac not in self._first_seen:
             return False
 
-        # If it has associated with multiple different APs, it's roaming / mobile
-        distinct_aps = {ap for _, ap in self._ap_history.get(norm_mac, [])}
-        if len(distinct_aps) > 1:
+        # Require minimum number of samples
+        history = self._ap_history.get(norm_mac)
+        if history is None or len(history) < self.min_samples:
             return False
 
-        # Require minimum number of samples
-        history = self._ap_history.get(norm_mac, [])
-        if len(history) < self.min_samples:
+        # If it has associated with multiple different APs, it's roaming / mobile
+        distinct_aps = {ap for _, ap in history}
+        if len(distinct_aps) > 1:
             return False
 
         # Require minimum dwell duration
