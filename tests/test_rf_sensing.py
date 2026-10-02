@@ -189,16 +189,26 @@ def test_stationary_client_rf_sensing() -> None:
     t = 2000.0
 
     # Feed baseline for client
-    detector.feed_client_sample(client_mac, ap_mac, -55, client_name="Smart Plug", area_id=area_id, now=t)
-    detector.feed_client_sample(client_mac, ap_mac, -55, client_name="Smart Plug", area_id=area_id, now=t + 5)
-    detector.feed_client_sample(client_mac, ap_mac, -55, client_name="Smart Plug", area_id=area_id, now=t + 10)
+    detector.feed_client_sample(
+        client_mac, ap_mac, -55, client_name="Smart Plug", area_id=area_id, now=t
+    )
+    detector.feed_client_sample(
+        client_mac, ap_mac, -55, client_name="Smart Plug", area_id=area_id, now=t + 5
+    )
+    detector.feed_client_sample(
+        client_mac, ap_mac, -55, client_name="Smart Plug", area_id=area_id, now=t + 10
+    )
 
     snap_init = detector.evaluate_areas(now=t + 10)
     assert not snap_init.area_motion.get(area_id, False)
 
     # Induce sharp perturbation
-    detector.feed_client_sample(client_mac, ap_mac, -72, client_name="Smart Plug", area_id=area_id, now=t + 15)
-    detector.feed_client_sample(client_mac, ap_mac, -78, client_name="Smart Plug", area_id=area_id, now=t + 18)
+    detector.feed_client_sample(
+        client_mac, ap_mac, -72, client_name="Smart Plug", area_id=area_id, now=t + 15
+    )
+    detector.feed_client_sample(
+        client_mac, ap_mac, -78, client_name="Smart Plug", area_id=area_id, now=t + 18
+    )
 
     snap_disturbed = detector.evaluate_areas(now=t + 18)
     assert snap_disturbed.area_motion.get(area_id) is True

@@ -209,7 +209,9 @@ def _render_png_pillow(
                     fill=(0, 229, 255),
                     outline=(255, 255, 255),
                 )
-                draw.text((px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255))
+                draw.text(
+                    (px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255)
+                )
 
     import io
 
@@ -393,7 +395,9 @@ class HeatmapRenderer:
         pixel_data = [[neutral_color for _ in range(cols)] for _ in range(rows)]
 
         if not self.pillow_available:
-            return _render_png_pure_python(pixel_data, rows, cols, scale=self.cell_scale)
+            return _render_png_pure_python(
+                pixel_data, rows, cols, scale=self.cell_scale
+            )
 
         from PIL import Image, ImageDraw
 
@@ -438,7 +442,11 @@ class HeatmapRenderer:
                 p_info = ap_markers[peer_mac]
                 peer_px = int((float(p_info.get("x_m", 0.0)) / resolution_m) * scale)
                 peer_py = int((float(p_info.get("y_m", 0.0)) / resolution_m) * scale)
-            elif link.get("area_id") and grid.room_labels and link["area_id"] in grid.room_labels:
+            elif (
+                link.get("area_id")
+                and grid.room_labels
+                and link["area_id"] in grid.room_labels
+            ):
                 r_info = grid.room_labels[link["area_id"]]
                 peer_px = int((float(r_info.get("x_m", 0.0)) / resolution_m) * scale)
                 peer_py = int((float(r_info.get("y_m", 0.0)) / resolution_m) * scale)
@@ -452,12 +460,20 @@ class HeatmapRenderer:
                 line_width = max(2, scale // 4)
                 mid_x = (ap_px + peer_px) // 2
                 mid_y = (ap_py + peer_py) // 2
-                draw.line([(ap_px, ap_py), (peer_px, peer_py)], fill=line_color, width=line_width)
+                draw.line(
+                    [(ap_px, ap_py), (peer_px, peer_py)],
+                    fill=line_color,
+                    width=line_width,
+                )
                 draw.text((mid_x, mid_y), f"⚡ {score}%", fill=(255, 200, 0))
             else:
                 line_color = (0, 180, 120)  # Calm green/teal
                 line_width = max(1, scale // 8)
-                draw.line([(ap_px, ap_py), (peer_px, peer_py)], fill=line_color, width=line_width)
+                draw.line(
+                    [(ap_px, ap_py), (peer_px, peer_py)],
+                    fill=line_color,
+                    width=line_width,
+                )
 
         # 3. Draw AP Markers on top
         for ap_mac, ap_data in ap_markers.items():
@@ -473,9 +489,12 @@ class HeatmapRenderer:
                     fill=(0, 229, 255),
                     outline=(255, 255, 255),
                 )
-                draw.text((px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255))
+                draw.text(
+                    (px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255)
+                )
 
         import io
+
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
@@ -534,4 +553,3 @@ class HeatmapRenderer:
                 resolution_m=grid.resolution_m if grid else 0.5,
             )
         return _render_png_pure_python(pixel_data, rows, cols, scale=self.cell_scale)
-

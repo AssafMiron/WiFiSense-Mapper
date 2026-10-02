@@ -315,7 +315,8 @@ def async_sync_device_area(
             for ident in device.identifiers:
                 if (
                     len(ident) >= 2
-                    and str(ident[1]).lower().replace("-", ":").replace(".", ":") == norm_mac
+                    and str(ident[1]).lower().replace("-", ":").replace(".", ":")
+                    == norm_mac
                 ):
                     matched = True
                     break
@@ -367,4 +368,3 @@ def get_floor_name_from_id(hass: HomeAssistant, floor_id: str | None) -> str:
         return floor.name if floor and floor.name else floor_id
     except Exception:  # noqa: BLE001
         return floor_id
-

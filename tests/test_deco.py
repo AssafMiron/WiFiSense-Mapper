@@ -32,9 +32,7 @@ def test_deco_connect_sync_passes_username_and_ssl() -> None:
     """Test that _connect_sync passes username and verify_ssl=False to TPLinkDecoClient."""
     client = DecoClient("192.168.0.1", "custom_user", "secret_pass")
 
-    with patch(
-        "tplinkrouterc6u.TPLinkDecoClient"
-    ) as mock_tplink_cls:
+    with patch("tplinkrouterc6u.TPLinkDecoClient") as mock_tplink_cls:
         mock_instance = MagicMock()
         mock_tplink_cls.return_value = mock_instance
 
@@ -261,7 +259,9 @@ async def test_deco_async_methods() -> None:
     def fake_connect():
         client._client = MagicMock()
 
-    with patch.object(client, "_connect_sync", side_effect=fake_connect) as mock_connect_sync:
+    with patch.object(
+        client, "_connect_sync", side_effect=fake_connect
+    ) as mock_connect_sync:
         success = await client.async_connect()
         assert success is True
         assert client.is_connected is True
@@ -272,7 +272,9 @@ async def test_deco_async_methods() -> None:
         assert res == []
         mock_get_clients.assert_called_once()
 
-    with patch.object(client, "_get_ap_stats_sync", return_value=[]) as mock_get_ap_stats:
+    with patch.object(
+        client, "_get_ap_stats_sync", return_value=[]
+    ) as mock_get_ap_stats:
         res_ap = await client.async_get_ap_stats()
         assert res_ap == []
         mock_get_ap_stats.assert_called_once()
@@ -355,7 +357,11 @@ def test_deco_resilient_fallback_on_wlan_error() -> None:
         if "device_list" in path:
             return {
                 "device_list": [
-                    {"mac": "11-22-33-44-55-66", "custom_nickname": "Office Deco", "device_model": "X60"}
+                    {
+                        "mac": "11-22-33-44-55-66",
+                        "custom_nickname": "Office Deco",
+                        "device_model": "X60",
+                    }
                 ]
             }
         elif "client_list" in path:
@@ -591,5 +597,3 @@ async def test_deco_async_get_backhaul_links() -> None:
     assert link["rssi"] == -64
     assert link["type"] == "wifi"
     assert link["band"] == "5GHz"
-
-

@@ -31,8 +31,12 @@ def test_integer_device_identifier_does_not_crash(hass: HomeAssistant) -> None:
 
     mock_dev_reg.devices = {"device_1": mock_device}
 
-    with patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg):
-        area_id, _floor_id = auto_link_ap_to_ha_device(hass, "b0:a7:b9:bb:36:58", "Office Deco")
+    with patch(
+        "homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg
+    ):
+        area_id, _floor_id = auto_link_ap_to_ha_device(
+            hass, "b0:a7:b9:bb:36:58", "Office Deco"
+        )
         assert area_id == "office"
 
 
@@ -55,7 +59,9 @@ def test_in_memory_log_buffer_captures_messages() -> None:
     test_logger.warning("Test warning for troubleshooting inspector")
 
     captured = list(_LOG_BUFFER.buffer)
-    assert any("Test warning for troubleshooting inspector" in line for line in captured)
+    assert any(
+        "Test warning for troubleshooting inspector" in line for line in captured
+    )
 
 
 @pytest.mark.asyncio
@@ -95,7 +101,9 @@ async def test_area_coverage_calculation(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_dump(hass: HomeAssistant, mock_config_entry_no_router) -> None:
+async def test_diagnostics_dump(
+    hass: HomeAssistant, mock_config_entry_no_router
+) -> None:
     """Test Home Assistant diagnostics dump for WiFiSense entry."""
     from custom_components.wifisense_mapper.const import DOMAIN
     from custom_components.wifisense_mapper.diagnostics import (
@@ -103,7 +111,9 @@ async def test_diagnostics_dump(hass: HomeAssistant, mock_config_entry_no_router
     )
 
     mock_config_entry_no_router.add_to_hass(hass)
-    coordinator = WiFiSenseCoordinator(hass, mock_config_entry_no_router, router_client=None)
+    coordinator = WiFiSenseCoordinator(
+        hass, mock_config_entry_no_router, router_client=None
+    )
 
     hass.data.setdefault(DOMAIN, {})[mock_config_entry_no_router.entry_id] = {
         "coordinator": coordinator,
@@ -235,18 +245,26 @@ async def test_anomaly_sensor_returns_zero_when_idle(
     from custom_components.wifisense_mapper.sensor import AnomalyScoreSensor
 
     mock_config_entry_no_router.add_to_hass(hass)
-    coordinator = WiFiSenseCoordinator(hass, mock_config_entry_no_router, router_client=None)
+    coordinator = WiFiSenseCoordinator(
+        hass, mock_config_entry_no_router, router_client=None
+    )
     await coordinator.async_initialize()
 
     mock_dev_info = MagicMock()
     sensor = AnomalyScoreSensor(
-        coordinator, mock_config_entry_no_router, "ground", "Ground Floor", mock_dev_info
+        coordinator,
+        mock_config_entry_no_router,
+        "ground",
+        "Ground Floor",
+        mock_dev_info,
     )
 
     assert sensor.native_value == 0.0
 
 
-def test_auto_link_prioritizes_room_name_over_inherited_area(hass: HomeAssistant) -> None:
+def test_auto_link_prioritizes_room_name_over_inherited_area(
+    hass: HomeAssistant,
+) -> None:
     """Test that device name 'Bedroom Deco' resolves to area 'bedroom' even if device was assigned to 'office' in HA."""
     mock_dev_reg = MagicMock()
     mock_area_reg = MagicMock()
@@ -279,9 +297,16 @@ def test_auto_link_prioritizes_room_name_over_inherited_area(hass: HomeAssistant
     mock_floor_reg.async_get_floor.return_value = mock_floor
 
     with (
-        patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg),
-        patch("homeassistant.helpers.area_registry.async_get", return_value=mock_area_reg),
-        patch("homeassistant.helpers.floor_registry.async_get", return_value=mock_floor_reg),
+        patch(
+            "homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg
+        ),
+        patch(
+            "homeassistant.helpers.area_registry.async_get", return_value=mock_area_reg
+        ),
+        patch(
+            "homeassistant.helpers.floor_registry.async_get",
+            return_value=mock_floor_reg,
+        ),
     ):
         area_id, floor_id = auto_link_ap_to_ha_device(hass, "b0:a7:b9:bb:2f:ac")
         assert area_id == "bedroom"
@@ -304,21 +329,33 @@ def test_async_sync_device_area(hass: HomeAssistant) -> None:
 
     mock_dev_reg.devices = {"dev_123": mock_device}
 
-    with patch("homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg):
+    with patch(
+        "homeassistant.helpers.device_registry.async_get", return_value=mock_dev_reg
+    ):
         # 1. Blank area is updated automatically
-        updated = async_sync_device_area(hass, "b0:a7:b9:bb:32:30", "kitchen", overwrite=False)
+        updated = async_sync_device_area(
+            hass, "b0:a7:b9:bb:32:30", "kitchen", overwrite=False
+        )
         assert updated is True
-        mock_dev_reg.async_update_device.assert_called_with("dev_123", area_id="kitchen")
+        mock_dev_reg.async_update_device.assert_called_with(
+            "dev_123", area_id="kitchen"
+        )
 
         # 2. Existing area without overwrite does not update
         mock_device.area_id = "kitchen"
-        updated2 = async_sync_device_area(hass, "b0:a7:b9:bb:32:30", "living_room", overwrite=False)
+        updated2 = async_sync_device_area(
+            hass, "b0:a7:b9:bb:32:30", "living_room", overwrite=False
+        )
         assert updated2 is False
 
         # 3. Existing area with overwrite=True updates
-        updated3 = async_sync_device_area(hass, "b0:a7:b9:bb:32:30", "living_room", overwrite=True)
+        updated3 = async_sync_device_area(
+            hass, "b0:a7:b9:bb:32:30", "living_room", overwrite=True
+        )
         assert updated3 is True
-        mock_dev_reg.async_update_device.assert_called_with("dev_123", area_id="living_room")
+        mock_dev_reg.async_update_device.assert_called_with(
+            "dev_123", area_id="living_room"
+        )
 
 
 def test_multi_ap_coverage_and_overlays() -> None:
@@ -344,6 +381,3 @@ def test_multi_ap_coverage_and_overlays() -> None:
     renderer = HeatmapRenderer()
     png_bytes = renderer.render_coverage(grid, ap_coverage_radius_m=4.0)
     assert png_bytes.startswith(b"\x89PNG\r\n\x1a\n")
-
-
-

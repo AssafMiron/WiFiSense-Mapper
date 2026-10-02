@@ -272,7 +272,9 @@ async def test_options_flow(hass: HomeAssistant, mock_config_entry_no_router) ->
 
 
 @pytest.mark.asyncio
-async def test_options_flow_ap_mapping(hass: HomeAssistant, mock_config_entry_no_router) -> None:
+async def test_options_flow_ap_mapping(
+    hass: HomeAssistant, mock_config_entry_no_router
+) -> None:
     """Test options flow AP and Deco placement step."""
     from homeassistant.helpers import area_registry as ar
 
@@ -383,6 +385,3 @@ async def test_options_flow_vacuum_mapping_with_vacuum_domain_attributes(
     )
     assert result_saved["type"] == data_entry_flow.FlowResultType.CREATE_ENTRY
     assert result_saved["data"]["vacuum_room_mappings"]["16"] == "living_room"
-
-
-

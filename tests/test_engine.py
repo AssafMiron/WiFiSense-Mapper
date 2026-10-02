@@ -150,7 +150,11 @@ class TestHeatmapRenderer:
         grid = SpatialGrid("g1", width_m=10, height_m=10, resolution_m=1.0)
         grid.set_ap_marker("11:11:11:11:11:11", "Main Deco", 2.0, 2.0, "living_room")
         grid.set_ap_marker("22:22:22:22:22:22", "Sat Deco", 8.0, 8.0, "office")
-        grid.room_labels["living_room"] = {"name": "Living Room", "x_m": 2.0, "y_m": 2.0}
+        grid.room_labels["living_room"] = {
+            "name": "Living Room",
+            "x_m": 2.0,
+            "y_m": 2.0,
+        }
         grid.room_labels["office"] = {"name": "Office", "x_m": 8.0, "y_m": 8.0}
 
         snapshot = RFSensingSnapshot(

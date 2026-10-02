@@ -176,16 +176,18 @@ def test_person_localization_engine() -> None:
     assert tracker.mac == "aa:bb:cc:11:22:33"
     assert tracker.person_name == "Bob"
 
-    engine.set_micro_zones([
-        {
-            "name": "Couch",
-            "area_id": "living_room",
-            "floor_id": "ground_floor",
-            "x_m": 2.0,
-            "y_m": 5.0,
-            "radius_m": 1.5,
-        }
-    ])
+    engine.set_micro_zones(
+        [
+            {
+                "name": "Couch",
+                "area_id": "living_room",
+                "floor_id": "ground_floor",
+                "x_m": 2.0,
+                "y_m": 5.0,
+                "radius_m": 1.5,
+            }
+        ]
+    )
     assert len(engine.micro_zones) == 1
     assert engine.micro_zones[0].name == "Couch"
 
@@ -223,4 +225,3 @@ def test_person_tracker_update_with_none_rssi() -> None:
     assert state.last_seen_ts == now
     assert state.activity != STATE_AWAY
     assert state.confidence > 0.0
-

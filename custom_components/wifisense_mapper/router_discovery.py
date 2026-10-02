@@ -236,7 +236,9 @@ def discover_all_routers(hass: HomeAssistant) -> list[DiscoveredRouter]:
             discovered = provider.discover(hass)
             results.extend(discovered)
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Error running discovery provider %s: %s", provider.router_type, exc)
+            _LOGGER.warning(
+                "Error running discovery provider %s: %s", provider.router_type, exc
+            )
     return results
 
 

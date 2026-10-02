@@ -23,9 +23,9 @@ _LOGGER = logging.getLogger(__name__)
 
 # Sensitivity profiles: (z_score_weight, variance_weight, trigger_threshold, min_variance)
 SENSITIVITY_PROFILES: dict[str, tuple[float, float, float, float]] = {
-    "low": (0.4, 0.6, 70.0, 10.0),      # Stricter, requires larger movement
-    "medium": (0.5, 0.5, 55.0, 6.0),    # Balanced for everyday walking
-    "high": (0.6, 0.4, 40.0, 3.5),      # Sensitive, catches smaller movements
+    "low": (0.4, 0.6, 70.0, 10.0),  # Stricter, requires larger movement
+    "medium": (0.5, 0.5, 55.0, 6.0),  # Balanced for everyday walking
+    "high": (0.6, 0.4, 40.0, 3.5),  # Sensitive, catches smaller movements
 }
 
 
@@ -47,9 +47,7 @@ class RFLinkState:
     )
 
     # Rolling baseline estimation
-    baseline_samples: deque[int] = field(
-        default_factory=lambda: deque(maxlen=100)
-    )
+    baseline_samples: deque[int] = field(default_factory=lambda: deque(maxlen=100))
     baseline_mean: float = -65.0
     baseline_std: float = 2.0
 
@@ -379,14 +377,19 @@ class RFPerturbationDetector:
 
             aid = link.area_id
             area_active_links[aid] = area_active_links.get(aid, 0) + 1
-            if aid not in area_max_scores or link.disturbance_score > area_max_scores[aid]:
+            if (
+                aid not in area_max_scores
+                or link.disturbance_score > area_max_scores[aid]
+            ):
                 area_max_scores[aid] = link.disturbance_score
 
             if link.is_perturbed:
                 area_has_hit[aid] = True
                 has_any_perturbation = True
 
-        all_monitored_areas = set(area_max_scores.keys()) | set(self._area_motion.keys())
+        all_monitored_areas = set(area_max_scores.keys()) | set(
+            self._area_motion.keys()
+        )
 
         # Update area presence with hysteresis and hold-down timer
         for aid in all_monitored_areas:

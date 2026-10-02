@@ -79,7 +79,9 @@ def test_parse_vacuum_map_features() -> None:
     # Check furniture generation for Living Room and Office
     furniture_names = [f.name for f in features.furniture]
     assert any("Sofa" in name for name in furniture_names)
-    assert any("Dock" in name for name in furniture_names or "Dock" in str(features.dock_m))
+    assert any(
+        "Dock" in name for name in furniture_names or "Dock" in str(features.dock_m)
+    )
 
     # Test wall crossing raycaster
     # Ray from Living room (2.0, 5.0) to Office (8.0, 5.0) must cross center wall
