@@ -37,18 +37,24 @@ from .const import (
     CONF_MICRO_ZONES,
     CONF_PERSON_TAGS,
     CONF_POLL_INTERVAL,
+    CONF_RF_COINCIDENCE_WINDOW_S,
     CONF_RF_OFF_DELAY,
+    CONF_RF_PROXIMITY_THRESHOLD_M,
     CONF_RF_SENSING_ENABLED,
     CONF_RF_SENSITIVITY,
+    CONF_RF_WALL_BLEED_SUPPRESSION,
     CONF_STATIONARY_DEVICES,
     DEFAULT_ADAPTIVE_POLLING,
     DEFAULT_ANOMALY_THRESHOLD,
     DEFAULT_FAST_EVENT_PUSH,
     DEFAULT_GRID_RESOLUTION,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_RF_COINCIDENCE_WINDOW_S,
     DEFAULT_RF_OFF_DELAY,
+    DEFAULT_RF_PROXIMITY_THRESHOLD_M,
     DEFAULT_RF_SENSING_ENABLED,
     DEFAULT_RF_SENSITIVITY,
+    DEFAULT_RF_WALL_BLEED_SUPPRESSION,
     DOMAIN,
     LAYER_ANOMALY,
     LAYER_COVERAGE,
@@ -62,6 +68,7 @@ from .engine.baseline import BaselineLearner
 from .engine.grid import SpatialGrid
 from .engine.heatmap import HeatmapRenderer
 from .engine.localization import MicroZone, PersonLocalizationEngine
+from .engine.rf_crosscheck import RFCrossCheckEngine, RFCrossCheckResult
 from .engine.rf_sensing import (
     RFPerturbationDetector,
     RFSensingSnapshot,
@@ -191,6 +198,36 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if person_tags and isinstance(person_tags, dict):
             self.rf_detector.classifier.set_excluded_macs(list(person_tags.keys()))
 
+        self.rf_proximity_threshold_m: float = float(
+            entry.options.get(
+                CONF_RF_PROXIMITY_THRESHOLD_M,
+                entry.data.get(
+                    CONF_RF_PROXIMITY_THRESHOLD_M, DEFAULT_RF_PROXIMITY_THRESHOLD_M
+                ),
+            )
+        )
+        self.rf_coincidence_window_s: float = float(
+            entry.options.get(
+                CONF_RF_COINCIDENCE_WINDOW_S,
+                entry.data.get(
+                    CONF_RF_COINCIDENCE_WINDOW_S, DEFAULT_RF_COINCIDENCE_WINDOW_S
+                ),
+            )
+        )
+        self.rf_wall_bleed_suppression: bool = bool(
+            entry.options.get(
+                CONF_RF_WALL_BLEED_SUPPRESSION,
+                entry.data.get(
+                    CONF_RF_WALL_BLEED_SUPPRESSION, DEFAULT_RF_WALL_BLEED_SUPPRESSION
+                ),
+            )
+        )
+        self.rf_crosscheck_engine = RFCrossCheckEngine(
+            proximity_threshold_m=self.rf_proximity_threshold_m,
+            coincidence_window_s=self.rf_coincidence_window_s,
+            wall_bleed_suppression=self.rf_wall_bleed_suppression,
+        )
+        self.rf_crosscheck_results: dict[str, RFCrossCheckResult] = {}
         self.rf_snapshot: RFSensingSnapshot = RFSensingSnapshot()
 
     def async_setup_event_listeners(self) -> None:
@@ -1011,11 +1048,15 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         # 1. Feed Deco backhaul links if router client supports it
-        if self.router_client and hasattr(self.router_client, "async_get_backhaul_links"):
+        if self.router_client and hasattr(
+            self.router_client, "async_get_backhaul_links"
+        ):
             try:
                 cached_aps = list(self.ap_stats.values()) if self.ap_stats else None
                 try:
-                    backhaul_links = await self.router_client.async_get_backhaul_links(aps=cached_aps)
+                    backhaul_links = await self.router_client.async_get_backhaul_links(
+                        aps=cached_aps
+                    )
                 except TypeError:
                     backhaul_links = await self.router_client.async_get_backhaul_links()
                 for b_link in backhaul_links:
@@ -1045,7 +1086,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         satellite_name=b_link.get("satellite_name"),
                     )
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.debug("Failed to harvest backhaul links for RF sensing: %s", exc)
+                _LOGGER.debug(
+                    "Failed to harvest backhaul links for RF sensing: %s", exc
+                )
 
         # 2. Feed stationary IoT client links
         for client in self.router_clients.values():
@@ -1070,7 +1113,19 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 3. Evaluate area states and disturbance scores
         self.rf_snapshot = self.rf_detector.evaluate_areas()
 
-        # 4. Adaptive polling interval adjustment
+        # 4. Cross-check RF disturbance with tracked persons to detect unknown presence and triage proximity
+        from .registry_helpers import get_all_areas
+
+        all_area_ids = {a.id for a in get_all_areas(self.hass)}
+        self.rf_crosscheck_results, _ = self.rf_crosscheck_engine.evaluate(
+            rf_snapshot=self.rf_snapshot,
+            trackers=self.localization_engine.trackers,
+            ap_stats=self.ap_stats,
+            grids=self.grids,
+            all_area_ids=all_area_ids,
+        )
+
+        # 5. Adaptive polling interval adjustment
         if self.adaptive_polling:
             configured_interval = timedelta(
                 seconds=self.entry.options.get(
@@ -1106,6 +1161,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "coverage": self.get_area_coverage_summary(),
             "person_tracking": self.localization_engine.all_states(),
             "rf_sensing": self.rf_snapshot,
+            "rf_crosscheck": self.rf_crosscheck_results,
         }
 
     # ─── Scanning control ─────────────────────────────────────────────────────
