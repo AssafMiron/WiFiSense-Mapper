@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.3.0] - 2026-09-30
+## [0.3.0] - 2026-10-01
 
 ### Added
 - **Device-Free RF Motion & Disturbance Sensing**:
@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rolling baseline variance tracker and anomaly detection engine with adjustable sensitivity.
   - New Home Assistant entities: `binary_sensor.<area>_rf_motion` and `sensor.<area>_rf_disturbance_score`.
   - Real-time RF link perturbation visualization layer on 2D floorplans.
+- **Unidentified Presence Detection & RF Proximity Cross-Checking**:
+  - Implemented `RFCrossCheckEngine` to cross-reference RF motion disturbances with known/identified wearable & phone tracking coordinates.
+  - New Home Assistant binary sensor: `binary_sensor.<area>_unidentified_presence` alerting on presence when motion occurs without any recognized client or person in the area.
+  - Enriched existing `binary_sensor.presence_<area>` entities with presence triage attributes (`occupant_type`, `unidentified_motion`, `verified_occupants`, `unidentified_count`, `rf_corroborated_occupant`).
+  - Spatial ray-bounding box wall bleed suppression (`rf_wall_bleed_suppression`) to prevent backhaul links crossing adjacent room boundaries from generating false room alerts.
+  - Configurable coincidence window (`rf_coincidence_window_sec`) and proximity radius (`rf_proximity_threshold_m`) in Options Flow.
+- **Adaptive Polling & Stationary Device Selection**:
+  - Added temporary polling burst acceleration (5s interval) during active RF disturbance events with seamless recovery to background polling interval (60s).
+  - Added manual stationary device selector in Options Flow allowing users to explicitly designate or override stationary IoT anchors.
 
 ## [0.2.7] - 2026-09-28
 
