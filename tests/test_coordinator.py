@@ -156,3 +156,81 @@ async def test_coordinator_rf_sensing_integration(mock_config_entry_deco):
     link_info = snapshot.link_states["backhaul:11:11:11:11:11:11->22:22:22:22:22:22"]
     assert link_info["area_id"] == "living_room"
     assert link_info["last_rssi"] == -65
+
+
+@pytest.mark.asyncio
+async def test_coordinator_adaptive_polling_acceleration_and_recovery(
+    mock_config_entry_deco,
+):
+    """Test coordinator dynamically switches to 3s burst mode during RF disturbance and reverts when quiet."""
+    from datetime import timedelta
+
+    hass = MagicMock()
+    hass.async_add_executor_job = AsyncMock(return_value=b"PNG")
+    hass.states.get = MagicMock(return_value=None)
+
+    router_client = MagicMock()
+    router_client.async_get_clients = AsyncMock(return_value=[])
+    router_client.async_get_ap_stats = AsyncMock(return_value=[])
+
+    coord = WiFiSenseCoordinator(hass, mock_config_entry_deco, router_client)
+    coord.grids["default"] = SpatialGrid("default")
+    coord.baselines["default"] = BaselineLearner("default")
+    coord.adaptive_polling = True
+    coord.rf_detector.off_delay_sec = 5.0
+    coord.update_interval = timedelta(seconds=60)
+
+    # 1. Quiet state: normal interval
+    router_client.async_get_backhaul_links = AsyncMock(
+        return_value=[
+            {
+                "satellite_mac": "22:22:22:22:22:22",
+                "parent_mac": "11:11:11:11:11:11",
+                "area_id": "living_room",
+                "rssi": -60,
+                "type": "wifi",
+            }
+        ]
+    )
+    for _ in range(3):
+        await coord._async_update_data()
+
+    assert coord.update_interval == timedelta(seconds=60)
+    assert not coord.rf_snapshot.burst_recommended
+
+    # 2. RF disturbance occurs: burst mode accelerates interval to 3s
+    router_client.async_get_backhaul_links = AsyncMock(
+        return_value=[
+            {
+                "satellite_mac": "22:22:22:22:22:22",
+                "parent_mac": "11:11:11:11:11:11",
+                "area_id": "living_room",
+                "rssi": -88,
+                "type": "wifi",
+            }
+        ]
+    )
+    for _ in range(2):
+        await coord._async_update_data()
+
+    assert coord.rf_snapshot.burst_recommended is True
+    assert coord.update_interval == timedelta(seconds=3)
+
+    # 3. RF disturbance subsides: quiet samples + timer clears burst mode back to configured 60s
+    router_client.async_get_backhaul_links = AsyncMock(
+        return_value=[
+            {
+                "satellite_mac": "22:22:22:22:22:22",
+                "parent_mac": "11:11:11:11:11:11",
+                "area_id": "living_room",
+                "rssi": -60,
+                "type": "wifi",
+            }
+        ]
+    )
+    # Simulate time jumping past off_delay_sec
+    coord.rf_detector._area_last_motion_time["living_room"] = 0.0
+    await coord._async_update_data()
+
+    assert coord.rf_snapshot.burst_recommended is False
+    assert coord.update_interval == timedelta(seconds=60)
