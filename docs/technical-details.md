@@ -75,6 +75,15 @@ flowchart TD
   * Hold-down timer maintains `on` state for `rf_off_delay` seconds (default 30s) after motion ceases.
   * Adaptive burst mode accelerates router polling to 3-second intervals during active motion events.
 
+### 2.6 RF Motion & Person Proximity Cross-Checking (`engine/rf_crosscheck.py`)
+* **Multi-Hypothesis Fusion**: Correlates device-free RF disturbances against active Wi-Fi person tracking (`PersonLocalizationEngine`):
+  * **Proximity Matching**: If an active RF disturbance coincides with a verified person located in the same area within $d \le 3.5$ meters (or strong RSSI $\ge -60$ dBm), the disturbance is attributed to that person (`occupant_type: "verified"`).
+  * **Localization Triage**: A matched person's activity is transitioned to `Walking / Moving`, their standby sleep decay timer is reset, and localization confidence is boosted to 1.0.
+  * **Sitting Person Behavior**: When a stationary occupant stands up, the resulting RF perturbation transitions them to `walking` without causing an intruder alert.
+  * **Wall-Bleed Cross-Room Suppression**: If no occupant is in the disturbed area, the engine checks 2D floor coordinates for occupants in adjacent rooms within 3.5 meters of the router link across the wall.
+  * **Sliding Coincidence Window ($\pm 15$s)**: Mitigates asynchronous polling and mesh roaming latency by matching observations across a rolling $\pm 15$-second window.
+  * **Unidentified Intruder Detection**: RF disturbance with no matching verified person triggers `binary_sensor.{area}_unidentified_presence` and sets `occupant_type: "unidentified"` (or `"mixed"`).
+
 ---
 
 ## 3. Lovelace Dashboard Visualization

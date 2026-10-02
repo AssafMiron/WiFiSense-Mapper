@@ -10,7 +10,8 @@ Binary sensors provide on/off signals for automations, alerts, and security syst
 
 | Entity ID | Device Class | State (`on`/`off`) | Description |
 |---|---|---|---|
-| `binary_sensor.{area}_presence` | `presence` | `on` = Presence detected | Fused presence indicator. Fires if any WiFi client is associated to this area's AP or if CSI nodes in this area detect motion. |
+| `binary_sensor.{area}_presence` | `presence` | `on` = Presence detected | Fused presence indicator. Fires if any WiFi client is associated to this area's AP, a localized person is present, CSI nodes detect motion, or unidentified RF motion occurs. |
+| `binary_sensor.{area}_unidentified_presence` | `motion` | `on` = Unidentified motion | **Intruder / Device-Free Alert**. Fires when physical RF motion is detected in this room with **no** matching connected family member/device nearby. |
 | `binary_sensor.{area}_rf_motion` | `motion` | `on` = Motion detected | **Device-Free RF Motion Sensing**. Triggers when human movement perturbs Deco wireless backhaul or stationary Wi-Fi IoT links in this room (works even without phones). |
 | `binary_sensor.{floor}_csi_motion` | `motion` | `on` = Motion detected | Aggregated ESP32 CSI motion for the entire floor. Triggers on Doppler / subcarrier disruptions. |
 | `binary_sensor.{floor}_object_anomaly` | `problem` | `on` = Anomaly active | Triggers when the spatial anomaly z-score exceeds the configured threshold vs. the learned baseline. |
@@ -18,11 +19,34 @@ Binary sensors provide on/off signals for automations, alerts, and security syst
 ### Presence Binary Sensor Attributes
 ```yaml
 area_id: living_room
+occupants:
+  - "Alice"
+occupant_count: 1
+occupant_type: "verified"  # "verified" | "unidentified" | "mixed" | "none"
+unidentified_motion: false
+verified_occupants:
+  - "Alice"
+unidentified_count: 0
+rf_corroborated_occupant: "Alice"
 device_count: 3
 devices:
   - "iPhone-15"
   - "MacBook-Pro"
   - "aa:bb:cc:dd:ee:ff"
+nearest_distance_m: 2.1
+```
+
+### Unidentified Presence Binary Sensor Attributes
+```yaml
+area_id: living_room
+area_name: Living Room
+disturbance_score: 82.5
+active_links_count: 2
+occupant_type: "unidentified"
+verified_occupants: []
+proximity_threshold_m: 3.5
+coincidence_window_sec: 15.0
+last_unidentified_ts: 1727827200.0
 ```
 
 ### RF Motion Binary Sensor Attributes
