@@ -215,6 +215,8 @@ class PersonTrackingState:
     distance_m: float | None = None
     distances_to_aps: dict[str, float] = field(default_factory=dict)
     speed_mps: float = 0.0
+    rf_corroborated: bool = False
+    last_rf_corroboration_ts: float | None = None
 
     @property
     def current_area_id(self) -> str | None:
@@ -251,6 +253,8 @@ class PersonTrackingState:
             "distance_m": self.distance_m,
             "distances_to_aps": self.distances_to_aps,
             "speed_mps": round(self.speed_mps, 2),
+            "rf_corroborated": self.rf_corroborated,
+            "last_rf_corroboration_ts": self.last_rf_corroboration_ts,
         }
 
 
@@ -626,6 +630,21 @@ class PersonTracker:
 
         self.latest_state.confidence = 1.0 if ap_pos_m is not None else 0.8
         return self.latest_state
+
+    def corroborate_rf_motion(self, ts: float | None = None) -> None:
+        """Corroborate that the person is physically moving based on matching RF disturbance."""
+        now = ts if ts is not None else time.time()
+        self.latest_state.activity = STATE_WALKING
+        self.latest_state.confidence = 1.0
+        self.latest_state.last_seen_ts = now
+        self.latest_state.rf_corroborated = True
+        self.latest_state.last_rf_corroboration_ts = now
+        if (
+            abs(self.filter.state[2]) < WALKING_VELOCITY_THRESHOLD
+            and abs(self.filter.state[3]) < WALKING_VELOCITY_THRESHOLD
+        ):
+            self.filter.state[2] = 0.3
+            self.filter.state[3] = 0.3
 
 
 class PersonLocalizationEngine:
