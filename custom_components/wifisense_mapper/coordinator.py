@@ -36,6 +36,7 @@ from .const import (
     CONF_FAST_EVENT_PUSH,
     CONF_MICRO_ZONES,
     CONF_PERSON_TAGS,
+    CONF_POLL_INTERVAL,
     CONF_RF_OFF_DELAY,
     CONF_RF_SENSING_ENABLED,
     CONF_RF_SENSITIVITY,
@@ -181,6 +182,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.rf_detector = RFPerturbationDetector(
             sensitivity=self.rf_sensitivity,
             off_delay_sec=self.rf_off_delay,
+            min_dwell_sec=180.0,
         )
         forced_stationary = entry.options.get(CONF_STATIONARY_DEVICES, [])
         if forced_stationary and isinstance(forced_stationary, list):
@@ -1072,8 +1074,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.adaptive_polling:
             configured_interval = timedelta(
                 seconds=self.entry.options.get(
-                    "poll_interval",
-                    self.entry.data.get("poll_interval", DEFAULT_POLL_INTERVAL),
+                    CONF_POLL_INTERVAL,
+                    self.entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
                 )
             )
             if self.rf_snapshot.burst_recommended:

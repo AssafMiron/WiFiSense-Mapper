@@ -83,8 +83,15 @@ class StationaryDeviceClassifier:
     as stationary anchors (e.g. smart plugs, TVs, smart speakers).
     """
 
-    def __init__(self, observation_window_sec: float = 1800.0) -> None:
+    def __init__(
+        self,
+        observation_window_sec: float = 1800.0,
+        min_dwell_sec: float = 0.0,
+        min_samples: int = 2,
+    ) -> None:
         self.observation_window_sec = observation_window_sec
+        self.min_dwell_sec = min_dwell_sec
+        self.min_samples = min_samples
         # mac -> list of (timestamp, ap_mac)
         self._ap_history: dict[str, deque[tuple[float, str]]] = {}
         # mac -> set of AP MACs seen
@@ -129,7 +136,7 @@ class StationaryDeviceClassifier:
         while self._ap_history[norm_mac] and self._ap_history[norm_mac][0][0] < cutoff:
             self._ap_history[norm_mac].popleft()
 
-    def is_stationary(self, mac: str) -> bool:
+    def is_stationary(self, mac: str, now: float | None = None) -> bool:
         """Return True if the client is classified as a stationary anchor."""
         norm_mac = mac.lower().strip()
         if norm_mac in self._excluded_macs:
@@ -145,9 +152,19 @@ class StationaryDeviceClassifier:
         if len(distinct_aps) > 1:
             return False
 
-        # Require at least 2 samples and steady single AP association
-        history_len = len(self._ap_history.get(norm_mac, []))
-        return history_len >= 2
+        # Require minimum number of samples
+        history = self._ap_history.get(norm_mac, [])
+        if len(history) < self.min_samples:
+            return False
+
+        # Require minimum dwell duration
+        if self.min_dwell_sec > 0:
+            ts = now if now is not None else time.time()
+            first_seen = self._first_seen.get(norm_mac, ts)
+            if ts - first_seen < self.min_dwell_sec:
+                return False
+
+        return True
 
 
 class RollingBaselineTracker:
@@ -186,12 +203,13 @@ class RFPerturbationDetector:
         sensitivity: str = "medium",
         off_delay_sec: float = 30.0,
         min_consecutive: int = 2,
+        min_dwell_sec: float = 0.0,
     ) -> None:
         self.sensitivity = sensitivity
         self.off_delay_sec = off_delay_sec
         self.min_consecutive = min_consecutive
 
-        self.classifier = StationaryDeviceClassifier()
+        self.classifier = StationaryDeviceClassifier(min_dwell_sec=min_dwell_sec)
         self.baseline_tracker = RollingBaselineTracker()
         self.links: dict[str, RFLinkState] = {}
 
@@ -267,7 +285,7 @@ class RFPerturbationDetector:
 
         # Update stationary device classifier
         self.classifier.record_client(norm_client, norm_ap, now=ts)
-        if not self.classifier.is_stationary(norm_client):
+        if not self.classifier.is_stationary(norm_client, now=ts):
             return
 
         link_id = f"client:{norm_ap}->{norm_client}"

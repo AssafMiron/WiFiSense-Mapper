@@ -26,6 +26,7 @@ from .const import (
     CONF_ROUTER_PASSWORD,
     CONF_ROUTER_TYPE,
     CONF_ROUTER_USERNAME,
+    CONF_STATIONARY_DEVICES,
     CONF_VACUUM_ENTITIES,
     DEFAULT_ADAPTIVE_POLLING,
     DEFAULT_ANOMALY_THRESHOLD,
@@ -364,6 +365,16 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                         CONF_ADAPTIVE_POLLING, DEFAULT_ADAPTIVE_POLLING
                     ),
                 ): bool,
+                vol.Optional(
+                    CONF_STATIONARY_DEVICES,
+                    default=current.get(CONF_STATIONARY_DEVICES, []),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=self._discover_client_options(),
+                        multiple=True,
+                        custom_value=True,
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="general", data_schema=schema)
@@ -1010,3 +1021,11 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 clients[norm_mac] = f"{name or 'Tag'} ({norm_mac})"
 
         return clients
+
+    def _discover_client_options(self) -> list[selector.SelectOptionDict]:
+        """Return SelectOptionDict list for known clients to select as stationary."""
+        known = self._get_known_clients()
+        return [
+            selector.SelectOptionDict(value=mac, label=label)
+            for mac, label in sorted(known.items(), key=lambda item: item[1].lower())
+        ]

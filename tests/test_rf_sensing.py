@@ -40,6 +40,26 @@ def test_stationary_device_classifier() -> None:
     assert classifier.is_stationary(phone_mac)
 
 
+def test_stationary_device_dwell_time() -> None:
+    """Verify device requires minimum dwell duration before auto-classification as stationary."""
+    classifier = StationaryDeviceClassifier(min_dwell_sec=180.0, min_samples=2)
+    plug_mac = "aa:bb:cc:11:22:33"
+    ap_mac = "11:22:33:44:55:66"
+    t0 = 1000.0
+
+    # 1. First observation
+    classifier.record_client(plug_mac, ap_mac, now=t0)
+    assert not classifier.is_stationary(plug_mac, now=t0)
+
+    # 2. Second observation after only 30s (< 180s dwell)
+    classifier.record_client(plug_mac, ap_mac, now=t0 + 30)
+    assert not classifier.is_stationary(plug_mac, now=t0 + 30)
+
+    # 3. Third observation after 200s (>= 180s dwell)
+    classifier.record_client(plug_mac, ap_mac, now=t0 + 200)
+    assert classifier.is_stationary(plug_mac, now=t0 + 200)
+
+
 def test_rolling_baseline_tracker() -> None:
     """Test rolling baseline mean and standard deviation updates."""
     tracker = RollingBaselineTracker(window_size=10, min_std=1.0)

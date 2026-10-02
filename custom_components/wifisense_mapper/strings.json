@@ -62,7 +62,8 @@
           "rf_sensing_enabled": "Enable Device-Free RF Motion Sensing",
           "rf_sensitivity": "RF Sensing Sensitivity",
           "rf_off_delay": "RF Motion Clear Delay (seconds)",
-          "adaptive_polling": "Adaptive Fast Polling (bursts to 3s when disturbance detected)"
+          "adaptive_polling": "Adaptive Fast Polling (bursts to 3s when disturbance detected)",
+          "stationary_devices": "Stationary Wi-Fi Devices (smart plugs, TVs, speakers)"
         },
         "data_description": {
           "poll_interval": "How often the background loop updates baselines, vacuum maps, and renders heatmaps (10–3600 seconds).",
@@ -74,7 +75,8 @@
           "rf_sensing_enabled": "Monitors Deco wireless backhaul and stationary Wi-Fi devices to detect unassociated human motion without extra hardware.",
           "rf_sensitivity": "Sensitivity threshold for RF disturbance detection: Low (stricter), Medium (recommended), High (subtle motion).",
           "rf_off_delay": "Number of seconds of quiet before an area motion sensor turns off (hold-down timer).",
-          "adaptive_polling": "Automatically accelerates router polling to 3-second bursts when movement is in progress, returning to standard interval when quiet."
+          "adaptive_polling": "Automatically accelerates router polling to 3-second bursts when movement is in progress, returning to standard interval when quiet.",
+          "stationary_devices": "Select or enter MAC addresses of stationary IoT devices that serve as fixed RF sensing links."
         }
       },
       "ap_mapping": {
