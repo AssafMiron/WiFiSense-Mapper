@@ -41,10 +41,9 @@ class RoomWalkableArea:
 
     def contains(self, x_m: float, y_m: float, margin_m: float = 0.2) -> bool:
         """Check if coordinates fall inside this room's bounding box."""
-        return (
-            (self.min_x_m - margin_m) <= x_m <= (self.max_x_m + margin_m)
-            and (self.min_y_m - margin_m) <= y_m <= (self.max_y_m + margin_m)
-        )
+        return (self.min_x_m - margin_m) <= x_m <= (self.max_x_m + margin_m) and (
+            self.min_y_m - margin_m
+        ) <= y_m <= (self.max_y_m + margin_m)
 
     def clamp(self, x_m: float, y_m: float) -> tuple[float, float]:
         """Project coordinates inside room bounds."""
@@ -89,9 +88,13 @@ class VacuumMapFeatures:
     height_px: int = 100
     width_m: float = 10.0
     height_m: float = 10.0
-    rooms: dict[str, RoomWalkableArea] = field(default_factory=dict)  # area_id or segment_id -> RoomWalkableArea
+    rooms: dict[str, RoomWalkableArea] = field(
+        default_factory=dict
+    )  # area_id or segment_id -> RoomWalkableArea
     furniture: list[FurnitureCluster] = field(default_factory=list)
-    wall_grid: list[list[bool]] = field(default_factory=list)  # True = wall / obstacle cell
+    wall_grid: list[list[bool]] = field(
+        default_factory=list
+    )  # True = wall / obstacle cell
     dock_m: tuple[float, float] | None = None
 
     def get_room_for_area(self, area_id: str | None) -> RoomWalkableArea | None:
@@ -105,7 +108,9 @@ class VacuumMapFeatures:
                 return room
         return None
 
-    def clamp_to_area(self, x_m: float, y_m: float, area_id: str | None) -> tuple[float, float]:
+    def clamp_to_area(
+        self, x_m: float, y_m: float, area_id: str | None
+    ) -> tuple[float, float]:
         """Clamp coordinates within the area's walkable boundary if available."""
         room = self.get_room_for_area(area_id)
         if room:
@@ -126,10 +131,16 @@ class VacuumMapFeatures:
         grid_h = len(self.wall_grid)
         grid_w = len(self.wall_grid[0])
 
-        col0 = max(0, min(grid_w - 1, int((start_x_m / max(0.1, self.width_m)) * grid_w)))
-        row0 = max(0, min(grid_h - 1, int((start_y_m / max(0.1, self.height_m)) * grid_h)))
+        col0 = max(
+            0, min(grid_w - 1, int((start_x_m / max(0.1, self.width_m)) * grid_w))
+        )
+        row0 = max(
+            0, min(grid_h - 1, int((start_y_m / max(0.1, self.height_m)) * grid_h))
+        )
         col1 = max(0, min(grid_w - 1, int((end_x_m / max(0.1, self.width_m)) * grid_w)))
-        row1 = max(0, min(grid_h - 1, int((end_y_m / max(0.1, self.height_m)) * grid_h)))
+        row1 = max(
+            0, min(grid_h - 1, int((end_y_m / max(0.1, self.height_m)) * grid_h))
+        )
 
         # Bresenham line algorithm
         dx = abs(col1 - col0)
@@ -188,7 +199,9 @@ def parse_vacuum_map_image(
     # Create downsampled wall/walkable grid for fast path loss raycasting (e.g. 64x64)
     grid_cols = min(64, w_px)
     grid_rows = min(64, h_px)
-    wall_grid: list[list[bool]] = [[False for _ in range(grid_cols)] for _ in range(grid_rows)]
+    wall_grid: list[list[bool]] = [
+        [False for _ in range(grid_cols)] for _ in range(grid_rows)
+    ]
 
     # Collect color histograms per room to detect distinct segments and obstacles
     # In Roborock maps:
@@ -199,7 +212,9 @@ def parse_vacuum_map_image(
     step_x = max(1, w_px // grid_cols)
     step_y = max(1, h_px // grid_rows)
 
-    room_pixel_bounds: dict[int, list[float]] = {}  # cluster_id -> [min_x, max_x, min_y, max_y, count]
+    room_pixel_bounds: dict[
+        int, list[float]
+    ] = {}  # cluster_id -> [min_x, max_x, min_y, max_y, count]
     furniture_candidates: list[tuple[float, float, str]] = []
 
     for r in range(grid_rows):
@@ -209,7 +224,12 @@ def parse_vacuum_map_image(
             pix = pixels[px, py]
             if not isinstance(pix, (tuple, list)) or len(pix) < 4:
                 continue
-            r_val, g_val, b_val, a_val = int(pix[0]), int(pix[1]), int(pix[2]), int(pix[3])
+            r_val, g_val, b_val, a_val = (
+                int(pix[0]),
+                int(pix[1]),
+                int(pix[2]),
+                int(pix[3]),
+            )
 
             if a_val < 30:
                 # Outside house / void
@@ -246,12 +266,16 @@ def parse_vacuum_map_image(
     rooms: dict[str, RoomWalkableArea] = {}
 
     # Sort largest color clusters representing real rooms
-    sorted_clusters = sorted(room_pixel_bounds.items(), key=lambda item: item[1][4], reverse=True)
+    sorted_clusters = sorted(
+        room_pixel_bounds.items(), key=lambda item: item[1][4], reverse=True
+    )
 
     # Correlate discovered segments with VacuumRoomSegments
     known_segs = list(segments) if segments else []
 
-    for idx, (_bin_id, bounds) in enumerate(sorted_clusters[: len(known_segs) if known_segs else 8]):
+    for idx, (_bin_id, bounds) in enumerate(
+        sorted_clusters[: len(known_segs) if known_segs else 8]
+    ):
         count = int(bounds[4])
         if count < 10:
             continue
@@ -313,7 +337,9 @@ def parse_vacuum_map_image(
                     furniture_type="sofa",
                     area_id=r_key,
                     floor_id=floor_id,
-                    x_m=round(r_obj.min_x_m + (r_obj.max_x_m - r_obj.min_x_m) * 0.35, 2),
+                    x_m=round(
+                        r_obj.min_x_m + (r_obj.max_x_m - r_obj.min_x_m) * 0.35, 2
+                    ),
                     y_m=round(r_obj.centroid_y_m, 2),
                     radius_m=1.8,
                 )
@@ -325,7 +351,9 @@ def parse_vacuum_map_image(
                     furniture_type="table",
                     area_id=r_key,
                     floor_id=floor_id,
-                    x_m=round(r_obj.min_x_m + (r_obj.max_x_m - r_obj.min_x_m) * 0.75, 2),
+                    x_m=round(
+                        r_obj.min_x_m + (r_obj.max_x_m - r_obj.min_x_m) * 0.75, 2
+                    ),
                     y_m=round(r_obj.centroid_y_m, 2),
                     radius_m=1.5,
                 )

@@ -209,7 +209,9 @@ def _render_png_pillow(
                     fill=(0, 229, 255),
                     outline=(255, 255, 255),
                 )
-                draw.text((px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255))
+                draw.text(
+                    (px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255)
+                )
 
     import io
 
@@ -382,6 +384,121 @@ class HeatmapRenderer:
             grid=grid,
         )
 
+    def render_rf_links(
+        self,
+        grid: SpatialGrid,
+        rf_snapshot: Any | None = None,
+    ) -> bytes:
+        """Render RF links and disturbance path visualization. Call in executor."""
+        cols, rows = grid.cols, grid.rows
+        neutral_color = (20, 24, 32)
+        pixel_data = [[neutral_color for _ in range(cols)] for _ in range(rows)]
+
+        if not self.pillow_available:
+            return _render_png_pure_python(
+                pixel_data, rows, cols, scale=self.cell_scale
+            )
+
+        from PIL import Image, ImageDraw
+
+        scale = self.cell_scale
+        resolution_m = grid.resolution_m or 0.5
+        img = Image.new("RGB", (cols * scale, rows * scale), color=neutral_color)
+        draw = ImageDraw.Draw(img)
+
+        # 1. Draw room labels
+        if grid.room_labels:
+            for rdata in grid.room_labels.values():
+                rname = rdata.get("name", "")
+                rx_m = float(rdata.get("x_m", 0.0))
+                ry_m = float(rdata.get("y_m", 0.0))
+                px = int((rx_m / resolution_m) * scale)
+                py = int((ry_m / resolution_m) * scale)
+                if 0 <= px < cols * scale and 0 <= py < rows * scale and rname:
+                    draw.text((px, py), rname, fill=(100, 110, 130))
+
+        # 2. Draw RF links from rf_snapshot
+        link_states = getattr(rf_snapshot, "link_states", {}) if rf_snapshot else {}
+        ap_markers = grid.ap_markers or {}
+
+        for link in link_states.values():
+            ap_mac = link.get("ap_mac")
+            peer_mac = link.get("peer_mac")
+            is_perturbed = link.get("is_perturbed", False)
+            score = link.get("disturbance_score", 0.0)
+
+            # Resolve AP coordinates
+            ap_info = ap_markers.get(ap_mac) if ap_mac else None
+            if not ap_info:
+                continue
+            ap_px = int((float(ap_info.get("x_m", 0.0)) / resolution_m) * scale)
+            ap_py = int((float(ap_info.get("y_m", 0.0)) / resolution_m) * scale)
+
+            # Resolve peer coordinates (another AP or an area center)
+            peer_px: int | None = None
+            peer_py: int | None = None
+
+            if peer_mac in ap_markers:
+                p_info = ap_markers[peer_mac]
+                peer_px = int((float(p_info.get("x_m", 0.0)) / resolution_m) * scale)
+                peer_py = int((float(p_info.get("y_m", 0.0)) / resolution_m) * scale)
+            elif (
+                link.get("area_id")
+                and grid.room_labels
+                and link["area_id"] in grid.room_labels
+            ):
+                r_info = grid.room_labels[link["area_id"]]
+                peer_px = int((float(r_info.get("x_m", 0.0)) / resolution_m) * scale)
+                peer_py = int((float(r_info.get("y_m", 0.0)) / resolution_m) * scale)
+
+            if peer_px is None or peer_py is None:
+                continue
+
+            # Draw RF link ray
+            if is_perturbed or score >= 50.0:
+                line_color = (255, 80, 0)  # Bright orange/red
+                line_width = max(2, scale // 4)
+                mid_x = (ap_px + peer_px) // 2
+                mid_y = (ap_py + peer_py) // 2
+                draw.line(
+                    [(ap_px, ap_py), (peer_px, peer_py)],
+                    fill=line_color,
+                    width=line_width,
+                )
+                draw.text((mid_x, mid_y), f"⚡ {score}%", fill=(255, 200, 0))
+            else:
+                line_color = (0, 180, 120)  # Calm green/teal
+                line_width = max(1, scale // 8)
+                draw.line(
+                    [(ap_px, ap_py), (peer_px, peer_py)],
+                    fill=line_color,
+                    width=line_width,
+                )
+
+        # 3. Draw AP Markers on top
+        for ap_mac, ap_data in ap_markers.items():
+            ap_name = ap_data.get("name") or f"Deco {ap_mac[-5:]}"
+            ap_x = float(ap_data.get("x_m", 0.0))
+            ap_y = float(ap_data.get("y_m", 0.0))
+            px = int((ap_x / resolution_m) * scale)
+            py = int((ap_y / resolution_m) * scale)
+            if 0 <= px < cols * scale and 0 <= py < rows * scale:
+                radius = max(4, scale // 2)
+                draw.ellipse(
+                    [px - radius, py - radius, px + radius, py + radius],
+                    fill=(0, 229, 255),
+                    outline=(255, 255, 255),
+                )
+                draw.text(
+                    (px + radius + 2, py - radius), f"📶 {ap_name}", fill=(0, 229, 255)
+                )
+
+        import io
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
     def _render(
         self,
         matrix: list[list[float | None]],
@@ -436,4 +553,3 @@ class HeatmapRenderer:
                 resolution_m=grid.resolution_m if grid else 0.5,
             )
         return _render_png_pure_python(pixel_data, rows, cols, scale=self.cell_scale)
-

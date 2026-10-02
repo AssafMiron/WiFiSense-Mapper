@@ -276,3 +276,76 @@ class TestMultiApMeshCoverageSensor:
             assert attrs["floor"] == "Second Floor"
             assert sensor._floor_id == "second_floor"
             assert sensor._floor_name == "Second Floor"
+
+    def test_area_rf_disturbance_sensor(self, mock_config_entry_no_router):
+        from custom_components.wifisense_mapper.engine.rf_sensing import (
+            RFSensingSnapshot,
+        )
+        from custom_components.wifisense_mapper.sensor import AreaRFDisturbanceSensor
+
+        coord = _make_coordinator(mock_config_entry_no_router)
+        snapshot = RFSensingSnapshot(
+            area_scores={"living_room": 74.5},
+            area_motion={"living_room": True},
+            area_active_links={"living_room": 2},
+        )
+        coord.data["rf_sensing"] = snapshot
+
+        sensor = AreaRFDisturbanceSensor(
+            coord,
+            mock_config_entry_no_router,
+            "living_room",
+            "Living Room",
+            MagicMock(),
+        )
+
+        assert sensor.native_value == 74.5
+        assert sensor._attr_suggested_area == "Living Room"
+        assert sensor.suggested_display_precision == 1
+        attrs = sensor.extra_state_attributes
+        assert attrs["motion_detected"] is True
+        assert attrs["active_links_count"] == 2
+
+    def test_rf_motion_binary_sensor(self, mock_config_entry_no_router):
+        from custom_components.wifisense_mapper.binary_sensor import (
+            WiFiSenseRFMotionBinarySensor,
+        )
+        from custom_components.wifisense_mapper.engine.rf_sensing import (
+            RFSensingSnapshot,
+        )
+
+        coord = _make_coordinator(mock_config_entry_no_router)
+        snapshot = RFSensingSnapshot(
+            area_scores={"office": 68.0},
+            area_motion={"office": True},
+            area_active_links={"office": 1},
+            link_states={
+                "client:ap1->plug1": {
+                    "link_id": "client:ap1->plug1",
+                    "link_type": "client",
+                    "area_id": "office",
+                    "last_rssi": -68,
+                    "baseline_mean": -55.0,
+                    "last_variance": 8.5,
+                    "disturbance_score": 68.0,
+                    "is_perturbed": True,
+                }
+            },
+        )
+        coord.data["rf_sensing"] = snapshot
+
+        binary_sensor = WiFiSenseRFMotionBinarySensor(
+            coord,
+            mock_config_entry_no_router,
+            "office",
+            "Office",
+            MagicMock(),
+        )
+
+        assert binary_sensor.is_on is True
+        assert binary_sensor._attr_suggested_area == "Office"
+        attrs = binary_sensor.extra_state_attributes
+        assert attrs["disturbance_score"] == 68.0
+        assert attrs["active_links_count"] == 1
+        assert len(attrs["monitored_links"]) == 1
+        assert attrs["monitored_links"][0]["perturbed"] is True

@@ -206,9 +206,7 @@ class SpatialGrid:
           - 1.0: Covered by 1 AP
           - 2.0: Multi-AP cross-covered (overlap zone)
         """
-        matrix: list[list[float | None]] = [
-            [0.0] * self.cols for _ in range(self.rows)
-        ]
+        matrix: list[list[float | None]] = [[0.0] * self.cols for _ in range(self.rows)]
         if not self._ap_positions:
             return matrix
 

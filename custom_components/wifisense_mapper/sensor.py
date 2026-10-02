@@ -89,6 +89,11 @@ async def async_setup_entry(
         entities.append(
             AreaCoverageSensor(coordinator, entry, area.id, area.name, hub_device_info)
         )
+        entities.append(
+            AreaRFDisturbanceSensor(
+                coordinator, entry, area.id, area.name, hub_device_info
+            )
+        )
 
     # Per-floor sensors (attached to Main Service Hub)
     for floor_id in coordinator.grids:
@@ -647,6 +652,58 @@ class WifiSensePersonDistanceSensor(WiFiSenseBaseSensor):
             "floor": state.floor_name,
             "room": state.area_name,
             "all_deco_distances": state.distances_to_aps,
+        }
+
+
+class AreaRFDisturbanceSensor(WiFiSenseBaseSensor):
+    """Sensor reporting the RF disturbance and variance score for an area."""
+
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _attr_icon = "mdi:waveform"
+    _attr_translation_key = "rf_disturbance"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        area_id: str,
+        area_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"rf_disturbance_{area_id}", device_info)
+        self._area_id = area_id
+        self._area_name = area_name
+        self._attr_name = f"{area_name} RF Disturbance"
+        self._attr_suggested_area = area_name
+
+    @property
+    def native_value(self) -> float:
+        """Return the current disturbance score percentage (0-100%)."""
+        data = self.coordinator.data or {}
+        rf_snapshot = data.get("rf_sensing")
+        if rf_snapshot and hasattr(rf_snapshot, "area_scores"):
+            return float(rf_snapshot.area_scores.get(self._area_id, 0.0))
+        return 0.0
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        rf_snapshot = data.get("rf_sensing")
+        is_motion = False
+        active_links = 0
+        if rf_snapshot:
+            is_motion = bool(rf_snapshot.area_motion.get(self._area_id, False))
+            active_links = rf_snapshot.area_active_links.get(self._area_id, 0)
+
+        return {
+            "area_id": self._area_id,
+            "area_name": self._area_name,
+            "motion_detected": is_motion,
+            "active_links_count": active_links,
+            "sensitivity": self.coordinator.rf_sensitivity,
+            "off_delay_sec": self.coordinator.rf_off_delay,
         }
 
 

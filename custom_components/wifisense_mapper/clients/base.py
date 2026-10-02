@@ -141,9 +141,12 @@ class RouterClient(ABC):
             return ""
         cleaned = mac.strip().replace("-", ":").replace(".", ":").lower()
         # Some routers return 12 hex chars without separators
-        if len(cleaned) == 12 and ":" not in cleaned and _HEX12_REGEX.fullmatch(cleaned):
+        if (
+            len(cleaned) == 12
+            and ":" not in cleaned
+            and _HEX12_REGEX.fullmatch(cleaned)
+        ):
             cleaned = ":".join(cleaned[i : i + 2] for i in range(0, 12, 2))
         if _MAC_REGEX.fullmatch(cleaned):
             return cleaned
         return ""
-

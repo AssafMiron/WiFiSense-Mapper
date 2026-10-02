@@ -95,7 +95,9 @@ def discover_vacuum_maps(
         is_vac_platform = entry.platform in VACUUM_PLATFORMS
         name_lower = (entry.name or entry.original_name or entry.entity_id).lower()
         uid_lower = (entry.unique_id or "").lower()
-        is_map_entity = "map" in name_lower or "map" in uid_lower or "floor" in name_lower
+        is_map_entity = (
+            "map" in name_lower or "map" in uid_lower or "floor" in name_lower
+        )
 
         if not is_vac_domain and not is_vac_platform and not is_map_entity:
             continue
@@ -175,7 +177,9 @@ def discover_vacuum_maps(
                 )
             )
 
-    _LOGGER.info("Vacuum map discovery complete: found %d vacuum/map entity/ies", len(found))
+    _LOGGER.info(
+        "Vacuum map discovery complete: found %d vacuum/map entity/ies", len(found)
+    )
     return found
 
 

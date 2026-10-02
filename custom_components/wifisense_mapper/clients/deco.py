@@ -96,7 +96,9 @@ class DecoClient(RouterClient):
             )
             return False
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Failed to connect directly to Deco at %s: %s", self.host, exc)
+            _LOGGER.warning(
+                "Failed to connect directly to Deco at %s: %s", self.host, exc
+            )
             self._connected = False
             return False
 
@@ -156,7 +158,9 @@ class DecoClient(RouterClient):
         if hasattr(self._client, "request"):
             try:
                 req_data = json.dumps({"operation": "read"})
-                resp = self._client.request("admin/device?form=device_list", req_data, ignore_errors=True)
+                resp = self._client.request(
+                    "admin/device?form=device_list", req_data, ignore_errors=True
+                )
                 if isinstance(resp, dict):
                     raw_list = resp.get("device_list", [])
                     if isinstance(raw_list, list) and raw_list:
@@ -167,14 +171,19 @@ class DecoClient(RouterClient):
         if not nodes:
             cached = getattr(self._client, "devices", [])
             if isinstance(cached, list) and cached:
-                nodes = [dict(n) if isinstance(n, dict) else dict(vars(n)) for n in cached]
+                nodes = [
+                    dict(n) if isinstance(n, dict) else dict(vars(n)) for n in cached
+                ]
 
         if not nodes and hasattr(self._client, "get_firmware"):
             try:
                 self._client.get_firmware()
                 cached = getattr(self._client, "devices", [])
                 if isinstance(cached, list) and cached:
-                    nodes = [dict(n) if isinstance(n, dict) else dict(vars(n)) for n in cached]
+                    nodes = [
+                        dict(n) if isinstance(n, dict) else dict(vars(n))
+                        for n in cached
+                    ]
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.debug("get_firmware fallback failed: %s", exc)
 
@@ -183,18 +192,47 @@ class DecoClient(RouterClient):
     def _extract_node_name(self, node: dict[str, Any]) -> str:
         """Extract the friendly name of a Deco mesh node, decoding base64 if needed."""
         # 1. custom_nickname / nickname
-        for key in ("custom_nickname", "nickname", "custom_name", "alias", "room", "room_name", "location", "device_name", "dev_name", "name", "label", "title"):
+        for key in (
+            "custom_nickname",
+            "nickname",
+            "custom_name",
+            "alias",
+            "room",
+            "room_name",
+            "location",
+            "device_name",
+            "dev_name",
+            "name",
+            "label",
+            "title",
+        ):
             val = node.get(key)
             if val:
                 dec = self._decode_string(val)
-                if dec and dec.lower() not in ("deco", "deco hub", "unknown", "null", "none"):
+                if dec and dec.lower() not in (
+                    "deco",
+                    "deco hub",
+                    "unknown",
+                    "null",
+                    "none",
+                ):
                     return dec
 
         # 2. device_model / model fallback with role
-        model = node.get("device_model") or node.get("model") or node.get("model_name") or node.get("hardware_ver") or "Deco"
+        model = (
+            node.get("device_model")
+            or node.get("model")
+            or node.get("model_name")
+            or node.get("hardware_ver")
+            or "Deco"
+        )
         model_str = str(model).strip()
         role = node.get("role")
-        role_suffix = f" ({str(role).capitalize()})" if role and str(role).lower() in ("master", "main", "satellite", "slave") else ""
+        role_suffix = (
+            f" ({str(role).capitalize()})"
+            if role and str(role).lower() in ("master", "main", "satellite", "slave")
+            else ""
+        )
 
         if model_str and model_str.lower() != "deco":
             prefix = "" if "deco" in model_str.lower() else "Deco "
@@ -204,7 +242,7 @@ class DecoClient(RouterClient):
 
     def _get_clients_sync(self) -> list[ClientInfo]:
         """Blocking client fetch — runs in executor.
-        
+
         Queries client_list per Deco node MAC for accurate AP association and RSSI.
         Falls back to global client_list and get_status on failure.
         """
@@ -214,11 +252,7 @@ class DecoClient(RouterClient):
         nodes = self._fetch_deco_nodes()
 
         for node in nodes:
-            mac_raw = (
-                node.get("mac")
-                or node.get("macaddr")
-                or node.get("_macaddr")
-            )
+            mac_raw = node.get("mac") or node.get("macaddr") or node.get("_macaddr")
             if not mac_raw:
                 continue
             norm_m = self.normalize_mac(str(mac_raw))
@@ -267,7 +301,9 @@ class DecoClient(RouterClient):
 
         if nodes and hasattr(self._client, "request"):
             for node in nodes:
-                node_mac = node.get("mac") or node.get("macaddr") or node.get("_macaddr")
+                node_mac = (
+                    node.get("mac") or node.get("macaddr") or node.get("_macaddr")
+                )
                 if not node_mac:
                     continue
                 norm_node_mac = self.normalize_mac(str(node_mac))
@@ -280,8 +316,12 @@ class DecoClient(RouterClient):
                     norm_node_mac.replace(":", "").upper(),
                 ):
                     try:
-                        payload = json.dumps({"operation": "read", "params": {"device_mac": mac_format}})
-                        resp = self._client.request("admin/client?form=client_list", payload, ignore_errors=True)
+                        payload = json.dumps(
+                            {"operation": "read", "params": {"device_mac": mac_format}}
+                        )
+                        resp = self._client.request(
+                            "admin/client?form=client_list", payload, ignore_errors=True
+                        )
                         if isinstance(resp, dict) and "client_list" in resp:
                             raw_clients = resp.get("client_list", [])
                             if isinstance(raw_clients, list):
@@ -305,14 +345,20 @@ class DecoClient(RouterClient):
         # If per-node queries returned no clients, fallback to global client_list
         if not seen_clients and hasattr(self._client, "request"):
             try:
-                payload = json.dumps({"operation": "read", "params": {"device_mac": "default"}})
-                resp = self._client.request("admin/client?form=client_list", payload, ignore_errors=True)
+                payload = json.dumps(
+                    {"operation": "read", "params": {"device_mac": "default"}}
+                )
+                resp = self._client.request(
+                    "admin/client?form=client_list", payload, ignore_errors=True
+                )
                 if isinstance(resp, dict):
                     raw_clients = resp.get("client_list", [])
                     if isinstance(raw_clients, list) and raw_clients:
                         for item in raw_clients:
                             client_info = self._parse_client_item(
-                                item, default_ap_mac=None, node_name_to_mac=node_name_to_mac
+                                item,
+                                default_ap_mac=None,
+                                node_name_to_mac=node_name_to_mac,
                             )
                             if client_info and client_info.mac:
                                 seen_clients[client_info.mac] = client_info
@@ -323,7 +369,11 @@ class DecoClient(RouterClient):
         if not seen_clients and hasattr(self._client, "get_status"):
             try:
                 status = self._client.get_status()
-                raw_devices = getattr(status, "devices", None) or getattr(status, "clients", []) or []
+                raw_devices = (
+                    getattr(status, "devices", None)
+                    or getattr(status, "clients", [])
+                    or []
+                )
                 for dev in raw_devices:
                     client_info = self._parse_client_item(
                         dev, default_ap_mac=None, node_name_to_mac=node_name_to_mac
@@ -542,13 +592,10 @@ class DecoClient(RouterClient):
 
         for dev in devices:
             # Check if this device is specifically a Deco mesh unit
-            is_deco = any(
-                domain == "tplink_deco"
-                for domain, _ in dev.identifiers
-            ) or (
-                dev.model is not None and "deco" in dev.model.lower()
-            ) or (
-                dev.name is not None and "deco" in dev.name.lower()
+            is_deco = (
+                any(domain == "tplink_deco" for domain, _ in dev.identifiers)
+                or (dev.model is not None and "deco" in dev.model.lower())
+                or (dev.name is not None and "deco" in dev.name.lower())
             )
             if not is_deco:
                 continue
@@ -612,9 +659,15 @@ class DecoClient(RouterClient):
 
             # Signal & RSSI extraction
             rssi: int | None = None
-            raw_sig = attrs.get("signal_level") or attrs.get("rssi") or attrs.get("signal")
+            raw_sig = (
+                attrs.get("signal_level") or attrs.get("rssi") or attrs.get("signal")
+            )
             if isinstance(raw_sig, dict):
-                val = raw_sig.get("band5") or raw_sig.get("band2_4") or raw_sig.get("band6")
+                val = (
+                    raw_sig.get("band5")
+                    or raw_sig.get("band2_4")
+                    or raw_sig.get("band6")
+                )
                 if isinstance(val, (int, float)):
                     rssi = int(val)
             elif isinstance(raw_sig, (int, float)):
@@ -648,7 +701,11 @@ class DecoClient(RouterClient):
                                 ap_mac = n_mac
                                 break
 
-            band = attrs.get("connection_type") or attrs.get("band") or attrs.get("interface")
+            band = (
+                attrs.get("connection_type")
+                or attrs.get("band")
+                or attrs.get("interface")
+            )
             if band:
                 band_str = str(band)
                 if "5" in band_str:
@@ -679,8 +736,10 @@ class DecoClient(RouterClient):
                     "via_bridge": True,
                     "is_home": state.state == "home",
                     "entity_id": entry.entity_id,
-                    "down_speed": attrs.get("down_kilobytes_per_s") or attrs.get("down_speed"),
-                    "up_speed": attrs.get("up_kilobytes_per_s") or attrs.get("up_speed"),
+                    "down_speed": attrs.get("down_kilobytes_per_s")
+                    or attrs.get("down_speed"),
+                    "up_speed": attrs.get("up_kilobytes_per_s")
+                    or attrs.get("up_speed"),
                 },
             )
 
@@ -709,13 +768,10 @@ class DecoClient(RouterClient):
         seen_names: set[str] = set()
         ap_stats_list: list[APStats] = []
         for dev in devices:
-            is_deco = any(
-                domain == "tplink_deco"
-                for domain, _ in dev.identifiers
-            ) or (
-                dev.model is not None and "deco" in dev.model.lower()
-            ) or (
-                dev.name is not None and "deco" in dev.name.lower()
+            is_deco = (
+                any(domain == "tplink_deco" for domain, _ in dev.identifiers)
+                or (dev.model is not None and "deco" in dev.model.lower())
+                or (dev.name is not None and "deco" in dev.name.lower())
             )
             if not is_deco:
                 continue
@@ -738,7 +794,9 @@ class DecoClient(RouterClient):
             if not dev_mac or dev_mac in seen_macs:
                 continue
 
-            clean_name = (dev.name_by_user or dev.name or f"Deco {dev_mac[-5:]}").strip()
+            clean_name = (
+                dev.name_by_user or dev.name or f"Deco {dev_mac[-5:]}"
+            ).strip()
             name_key = clean_name.lower()
             if name_key in seen_names:
                 # Same name AP already seen; avoid duplicate AP devices for multi-interface units
@@ -797,6 +855,78 @@ class DecoClient(RouterClient):
             sw_ver = node.get("software_ver")
             ip = node.get("device_ip") or node.get("ip") or node.get("ipaddr")
 
+            # Backhaul parsing
+            backhaul_info = node.get("backhaul")
+            b_type = "wifi"
+            b_rssi: int | None = None
+            b_signal: int | None = None
+            b_band: str | None = None
+            parent_raw = (
+                node.get("parent_mac")
+                or node.get("master_mac")
+                or node.get("uplink_mac")
+            )
+
+            b_sig_raw = None
+            if isinstance(backhaul_info, dict):
+                b_type = str(
+                    backhaul_info.get("type")
+                    or backhaul_info.get("link_type")
+                    or "wifi"
+                ).lower()
+                b_rssi_field = backhaul_info.get("rssi")
+                b_sig_field = backhaul_info.get("signal_level") or backhaul_info.get(
+                    "signal"
+                )
+                b_band = backhaul_info.get("band")
+                if not parent_raw:
+                    parent_raw = backhaul_info.get("parent_mac") or backhaul_info.get(
+                        "uplink_mac"
+                    )
+
+                if (
+                    b_rssi_field is not None
+                    and isinstance(b_rssi_field, (int, float))
+                    and int(b_rssi_field) < 0
+                ):
+                    b_rssi = int(b_rssi_field)
+                    b_signal = (
+                        int(b_sig_field)
+                        if b_sig_field is not None
+                        and isinstance(b_sig_field, (int, float))
+                        else None
+                    )
+                elif b_sig_field is not None:
+                    b_sig_raw = b_sig_field
+            elif isinstance(backhaul_info, str):
+                b_type = backhaul_info.lower()
+            else:
+                raw_rssi = node.get("rssi")
+                if (
+                    raw_rssi is not None
+                    and isinstance(raw_rssi, (int, float))
+                    and int(raw_rssi) < 0
+                ):
+                    b_rssi = int(raw_rssi)
+                else:
+                    b_sig_raw = node.get("signal_level") or node.get("signal")
+
+            if (
+                b_rssi is None
+                and b_sig_raw is not None
+                and isinstance(b_sig_raw, (int, float))
+            ):
+                sig_val = int(b_sig_raw)
+                if sig_val < 0:
+                    b_rssi = sig_val
+                elif 1 <= sig_val <= 5:
+                    b_signal = sig_val
+                    b_rssi = -50 if sig_val >= 3 else (-68 if sig_val == 2 else -82)
+
+            parent_mac_norm = (
+                self.normalize_mac(str(parent_raw)) if parent_raw else None
+            )
+
             result.append(
                 APStats(
                     mac=norm_node_mac,
@@ -808,6 +938,11 @@ class DecoClient(RouterClient):
                         "hardware_ver": hw_ver,
                         "software_ver": sw_ver,
                         "ip": ip,
+                        "backhaul_type": b_type,
+                        "backhaul_rssi": b_rssi,
+                        "backhaul_signal_level": b_signal,
+                        "backhaul_band": b_band,
+                        "parent_mac": parent_mac_norm,
                     },
                 )
             )
@@ -832,6 +967,62 @@ class DecoClient(RouterClient):
                 _LOGGER.debug("LAN MAC fallback failed: %s", exc)
 
         return result
+
+    async def async_get_backhaul_links(
+        self, aps: list[APStats] | None = None
+    ) -> list[dict[str, Any]]:
+        """Extract wireless mesh backhaul links between Deco nodes."""
+        if aps is None:
+            aps = await self.async_get_ap_stats()
+        if not aps or len(aps) <= 1:
+            return []
+
+        master_ap = next(
+            (
+                a
+                for a in aps
+                if (
+                    a.extra.get("role")
+                    and str(a.extra["role"]).lower() in ("master", "main")
+                )
+                or "master" in (a.name or "").lower()
+                or "main" in (a.name or "").lower()
+            ),
+            aps[0],
+        )
+
+        links: list[dict[str, Any]] = []
+        for ap in aps:
+            extra = ap.extra
+            role = str(extra.get("role") or "").lower()
+            if ap.mac == master_ap.mac or role in ("master", "main"):
+                continue
+
+            b_type = str(extra.get("backhaul_type") or "wifi").lower()
+            if "eth" in b_type:
+                # Wired backhaul, ignore for RF perturbation
+                continue
+
+            parent_mac = extra.get("parent_mac") or master_ap.mac
+            rssi = extra.get("backhaul_rssi")
+            if rssi is None:
+                sig_level = extra.get("backhaul_signal_level") or 3
+                rssi = -50 if sig_level >= 3 else (-68 if sig_level == 2 else -82)
+
+            links.append(
+                {
+                    "satellite_mac": ap.mac,
+                    "satellite_name": ap.name,
+                    "parent_mac": parent_mac,
+                    "area_id": ap.area_id,
+                    "rssi": rssi,
+                    "signal_level": extra.get("backhaul_signal_level"),
+                    "band": extra.get("backhaul_band"),
+                    "type": "wifi",
+                }
+            )
+
+        return links
 
     async def async_disconnect(self) -> None:
         """No persistent session to close for Deco."""

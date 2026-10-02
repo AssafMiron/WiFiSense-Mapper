@@ -31,18 +31,35 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .clients.base import APStats, ClientInfo
 from .const import (
+    CONF_ADAPTIVE_POLLING,
     CONF_DECO_ANCHORS,
     CONF_FAST_EVENT_PUSH,
     CONF_MICRO_ZONES,
     CONF_PERSON_TAGS,
+    CONF_POLL_INTERVAL,
+    CONF_RF_COINCIDENCE_WINDOW_S,
+    CONF_RF_OFF_DELAY,
+    CONF_RF_PROXIMITY_THRESHOLD_M,
+    CONF_RF_SENSING_ENABLED,
+    CONF_RF_SENSITIVITY,
+    CONF_RF_WALL_BLEED_SUPPRESSION,
+    CONF_STATIONARY_DEVICES,
+    DEFAULT_ADAPTIVE_POLLING,
     DEFAULT_ANOMALY_THRESHOLD,
     DEFAULT_FAST_EVENT_PUSH,
     DEFAULT_GRID_RESOLUTION,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_RF_COINCIDENCE_WINDOW_S,
+    DEFAULT_RF_OFF_DELAY,
+    DEFAULT_RF_PROXIMITY_THRESHOLD_M,
+    DEFAULT_RF_SENSING_ENABLED,
+    DEFAULT_RF_SENSITIVITY,
+    DEFAULT_RF_WALL_BLEED_SUPPRESSION,
     DOMAIN,
     LAYER_ANOMALY,
     LAYER_COVERAGE,
     LAYER_MOTION,
+    LAYER_RF_LINKS,
     LAYER_SIGNAL,
     LAYER_VARIANCE,
 )
@@ -51,6 +68,11 @@ from .engine.baseline import BaselineLearner
 from .engine.grid import SpatialGrid
 from .engine.heatmap import HeatmapRenderer
 from .engine.localization import MicroZone, PersonLocalizationEngine
+from .engine.rf_crosscheck import RFCrossCheckEngine, RFCrossCheckResult
+from .engine.rf_sensing import (
+    RFPerturbationDetector,
+    RFSensingSnapshot,
+)
 from .engine.vacuum_align import VacuumMapAligner
 from .engine.vacuum_map_parser import VacuumMapFeatures, parse_vacuum_map_image
 from .registry_helpers import get_all_floors, get_floor_for_area
@@ -148,6 +170,65 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.localization_engine = PersonLocalizationEngine()
         self._renderer = HeatmapRenderer()
         self._scanning: bool = True
+
+        # RF Disturbance & Motion Sensing (Deco Mesh Backhaul + Stationary IoT)
+        self.rf_sensing_enabled: bool = entry.options.get(
+            CONF_RF_SENSING_ENABLED,
+            entry.data.get(CONF_RF_SENSING_ENABLED, DEFAULT_RF_SENSING_ENABLED),
+        )
+        self.rf_sensitivity: str = entry.options.get(
+            CONF_RF_SENSITIVITY, DEFAULT_RF_SENSITIVITY
+        )
+        self.rf_off_delay: float = float(
+            entry.options.get(CONF_RF_OFF_DELAY, DEFAULT_RF_OFF_DELAY)
+        )
+        self.adaptive_polling: bool = entry.options.get(
+            CONF_ADAPTIVE_POLLING,
+            entry.data.get(CONF_ADAPTIVE_POLLING, DEFAULT_ADAPTIVE_POLLING),
+        )
+        self.rf_detector = RFPerturbationDetector(
+            sensitivity=self.rf_sensitivity,
+            off_delay_sec=self.rf_off_delay,
+            min_dwell_sec=180.0,
+        )
+        forced_stationary = entry.options.get(CONF_STATIONARY_DEVICES, [])
+        if forced_stationary and isinstance(forced_stationary, list):
+            self.rf_detector.classifier.set_forced_stationary(forced_stationary)
+        person_tags = entry.options.get(CONF_PERSON_TAGS, {})
+        if person_tags and isinstance(person_tags, dict):
+            self.rf_detector.classifier.set_excluded_macs(list(person_tags.keys()))
+
+        self.rf_proximity_threshold_m: float = float(
+            entry.options.get(
+                CONF_RF_PROXIMITY_THRESHOLD_M,
+                entry.data.get(
+                    CONF_RF_PROXIMITY_THRESHOLD_M, DEFAULT_RF_PROXIMITY_THRESHOLD_M
+                ),
+            )
+        )
+        self.rf_coincidence_window_s: float = float(
+            entry.options.get(
+                CONF_RF_COINCIDENCE_WINDOW_S,
+                entry.data.get(
+                    CONF_RF_COINCIDENCE_WINDOW_S, DEFAULT_RF_COINCIDENCE_WINDOW_S
+                ),
+            )
+        )
+        self.rf_wall_bleed_suppression: bool = bool(
+            entry.options.get(
+                CONF_RF_WALL_BLEED_SUPPRESSION,
+                entry.data.get(
+                    CONF_RF_WALL_BLEED_SUPPRESSION, DEFAULT_RF_WALL_BLEED_SUPPRESSION
+                ),
+            )
+        )
+        self.rf_crosscheck_engine = RFCrossCheckEngine(
+            proximity_threshold_m=self.rf_proximity_threshold_m,
+            coincidence_window_s=self.rf_coincidence_window_s,
+            wall_bleed_suppression=self.rf_wall_bleed_suppression,
+        )
+        self.rf_crosscheck_results: dict[str, RFCrossCheckResult] = {}
+        self.rf_snapshot: RFSensingSnapshot = RFSensingSnapshot()
 
     def async_setup_event_listeners(self) -> None:
         """Register state change event listeners for tracked devices and CSI sensors for instant updates."""
@@ -441,6 +522,9 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 4. Feed CSI scores to grids
         self._feed_csi_to_grids()
 
+        # 4.5. Update RF link disturbance sensing (Deco backhaul + stationary IoT)
+        await self._async_update_rf_sensing()
+
         # 5. Update person localization & activity engine
         self._update_person_localizations()
 
@@ -729,6 +813,7 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 LAYER_MOTION,
                 LAYER_ANOMALY,
                 LAYER_COVERAGE,
+                LAYER_RF_LINKS,
             ]:
                 try:
                     if layer == LAYER_SIGNAL:
@@ -747,6 +832,13 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         png = await self.hass.async_add_executor_job(
                             self._renderer.render_coverage, grid
                         )
+                    elif layer == LAYER_RF_LINKS:
+                        if hasattr(self._renderer, "render_rf_links"):
+                            png = await self.hass.async_add_executor_job(
+                                self._renderer.render_rf_links, grid, self.rf_snapshot
+                            )
+                        else:
+                            continue
                     else:  # anomaly
                         png = await self.hass.async_add_executor_job(
                             self._renderer.render_anomaly, grid, scores
@@ -949,6 +1041,112 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "all_areas": all_areas,
         }
 
+    async def _async_update_rf_sensing(self) -> None:
+        """Feed telemetry to RF perturbation detector and evaluate area presence."""
+        if not self.rf_sensing_enabled:
+            self.rf_snapshot = RFSensingSnapshot()
+            return
+
+        # 1. Feed Deco backhaul links if router client supports it
+        if self.router_client and hasattr(
+            self.router_client, "async_get_backhaul_links"
+        ):
+            try:
+                cached_aps = list(self.ap_stats.values()) if self.ap_stats else None
+                try:
+                    backhaul_links = await self.router_client.async_get_backhaul_links(
+                        aps=cached_aps
+                    )
+                except TypeError:
+                    backhaul_links = await self.router_client.async_get_backhaul_links()
+                for b_link in backhaul_links:
+                    sat_mac = b_link["satellite_mac"]
+                    parent_mac = b_link["parent_mac"]
+                    rssi = b_link.get("rssi")
+                    if rssi is None:
+                        continue
+
+                    # Look up area of satellite AP
+                    area_id = b_link.get("area_id")
+                    if not area_id and sat_mac in self.ap_stats:
+                        area_id = self.ap_stats[sat_mac].area_id
+                    if not area_id and parent_mac in self.ap_stats:
+                        area_id = self.ap_stats[parent_mac].area_id
+
+                    floor_id = None
+                    if sat_mac in self.ap_stats:
+                        floor_id = self.ap_stats[sat_mac].floor_id
+
+                    self.rf_detector.feed_backhaul_sample(
+                        satellite_mac=sat_mac,
+                        parent_mac=parent_mac,
+                        rssi=rssi,
+                        area_id=area_id,
+                        floor_id=floor_id,
+                        satellite_name=b_link.get("satellite_name"),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Failed to harvest backhaul links for RF sensing: %s", exc
+                )
+
+        # 2. Feed stationary IoT client links
+        for client in self.router_clients.values():
+            if client.rssi is None or not client.ap_mac:
+                continue
+
+            area_id = client.area_id
+            floor_id = client.floor_id
+            if not area_id and client.ap_mac in self.ap_stats:
+                area_id = self.ap_stats[client.ap_mac].area_id
+                floor_id = self.ap_stats[client.ap_mac].floor_id
+
+            self.rf_detector.feed_client_sample(
+                client_mac=client.mac,
+                ap_mac=client.ap_mac,
+                rssi=client.rssi,
+                client_name=client.hostname,
+                area_id=area_id,
+                floor_id=floor_id,
+            )
+
+        # 3. Evaluate area states and disturbance scores
+        self.rf_snapshot = self.rf_detector.evaluate_areas()
+
+        # 4. Cross-check RF disturbance with tracked persons to detect unknown presence and triage proximity
+        from .registry_helpers import get_all_areas
+
+        all_area_ids = {a.id for a in get_all_areas(self.hass)}
+        self.rf_crosscheck_results, _ = self.rf_crosscheck_engine.evaluate(
+            rf_snapshot=self.rf_snapshot,
+            trackers=self.localization_engine.trackers,
+            ap_stats=self.ap_stats,
+            grids=self.grids,
+            all_area_ids=all_area_ids,
+        )
+
+        # 5. Adaptive polling interval adjustment
+        if self.adaptive_polling:
+            configured_interval = timedelta(
+                seconds=self.entry.options.get(
+                    CONF_POLL_INTERVAL,
+                    self.entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+                )
+            )
+            if self.rf_snapshot.burst_recommended:
+                burst_interval = timedelta(seconds=3)
+                if self.update_interval != burst_interval:
+                    self.update_interval = burst_interval
+                    _LOGGER.debug(
+                        "RF disturbance detected: accelerated polling to 3s burst mode"
+                    )
+            elif self.update_interval != configured_interval:
+                self.update_interval = configured_interval
+                _LOGGER.debug(
+                    "RF field quiet: restored polling interval to %ds",
+                    configured_interval.total_seconds(),
+                )
+
     def _current_data(self, anomaly_scores: dict | None = None) -> dict[str, Any]:
         """Return the coordinator's data snapshot for entity polling."""
         return {
@@ -962,6 +1160,8 @@ class WiFiSenseCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "scanning": self._scanning,
             "coverage": self.get_area_coverage_summary(),
             "person_tracking": self.localization_engine.all_states(),
+            "rf_sensing": self.rf_snapshot,
+            "rf_crosscheck": self.rf_crosscheck_results,
         }
 
     # ─── Scanning control ─────────────────────────────────────────────────────

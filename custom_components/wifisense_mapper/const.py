@@ -6,7 +6,7 @@ from typing import Final
 
 # Integration domain & version
 DOMAIN: Final = "wifisense_mapper"
-VERSION: Final = "0.2.7"
+VERSION: Final = "0.3.0"
 
 # Platforms to set up
 PLATFORMS: Final = [
@@ -34,8 +34,12 @@ CONF_VACUUM_ENTITIES: Final = "vacuum_entities"  # list[str] entity ids
 CONF_NODE_AREA_LINKS: Final = "node_area_links"
 
 # Person tracking & micro-zone configs
-CONF_PERSON_TAGS: Final = "person_tags"  # dict[mac -> dict[person_entity_id, custom_name]]
-CONF_MICRO_ZONES: Final = "micro_zones"  # list[dict[name, area_id, floor_id, x_m, y_m, radius_m]]
+CONF_PERSON_TAGS: Final = (
+    "person_tags"  # dict[mac -> dict[person_entity_id, custom_name]]
+)
+CONF_MICRO_ZONES: Final = (
+    "micro_zones"  # list[dict[name, area_id, floor_id, x_m, y_m, radius_m]]
+)
 
 # Options
 CONF_POLL_INTERVAL: Final = "poll_interval"
@@ -43,7 +47,19 @@ CONF_HEATMAP_ENABLED: Final = "heatmap_enabled"
 CONF_ANOMALY_THRESHOLD: Final = "anomaly_threshold"
 CONF_BASELINE_DAYS: Final = "baseline_days"
 CONF_FAST_EVENT_PUSH: Final = "fast_event_push"
-CONF_DECO_ANCHORS: Final = "deco_anchors"  # dict[ap_mac/name -> dict[area_id, floor_id, x_pct, y_pct]]
+CONF_DECO_ANCHORS: Final = (
+    "deco_anchors"  # dict[ap_mac/name -> dict[area_id, floor_id, x_pct, y_pct]]
+)
+CONF_RF_SENSING_ENABLED: Final = "rf_sensing_enabled"
+CONF_RF_SENSITIVITY: Final = "rf_sensitivity"  # "low", "medium", "high"
+CONF_RF_OFF_DELAY: Final = "rf_off_delay"  # seconds
+CONF_ADAPTIVE_POLLING: Final = "adaptive_polling"
+CONF_STATIONARY_DEVICES: Final = (
+    "stationary_devices"  # list of MACs to treat as stationary
+)
+CONF_RF_PROXIMITY_THRESHOLD_M: Final = "rf_proximity_threshold_m"
+CONF_RF_COINCIDENCE_WINDOW_S: Final = "rf_coincidence_window_sec"
+CONF_RF_WALL_BLEED_SUPPRESSION: Final = "rf_wall_bleed_suppression"
 
 # ─── Activity states ──────────────────────────────────────────────────────────
 
@@ -61,6 +77,13 @@ DEFAULT_ANOMALY_THRESHOLD: Final = 3.0  # z-score
 DEFAULT_BASELINE_DAYS: Final = 7
 DEFAULT_GRID_RESOLUTION: Final = 0.5  # meters per cell
 DEFAULT_HEATMAP_ENABLED: Final = True
+DEFAULT_RF_SENSING_ENABLED: Final = True
+DEFAULT_RF_SENSITIVITY: Final = "medium"
+DEFAULT_RF_OFF_DELAY: Final = 30  # seconds
+DEFAULT_ADAPTIVE_POLLING: Final = True
+DEFAULT_RF_PROXIMITY_THRESHOLD_M: Final = 3.5  # meters
+DEFAULT_RF_COINCIDENCE_WINDOW_S: Final = 15.0  # seconds
+DEFAULT_RF_WALL_BLEED_SUPPRESSION: Final = True
 
 # ─── Router types ─────────────────────────────────────────────────────────────
 
@@ -121,6 +144,7 @@ LAYER_VARIANCE: Final = "variance"
 LAYER_MOTION: Final = "motion"
 LAYER_ANOMALY: Final = "anomaly"
 LAYER_COVERAGE: Final = "coverage"
+LAYER_RF_LINKS: Final = "rf_links"
 
 HEATMAP_LAYERS: Final = [
     LAYER_SIGNAL,
@@ -128,6 +152,7 @@ HEATMAP_LAYERS: Final = [
     LAYER_MOTION,
     LAYER_ANOMALY,
     LAYER_COVERAGE,
+    LAYER_RF_LINKS,
 ]
 
 # ─── Service names ────────────────────────────────────────────────────────────

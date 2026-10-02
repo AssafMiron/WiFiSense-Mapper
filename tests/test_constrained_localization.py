@@ -22,7 +22,9 @@ def test_calculate_distance_with_wall_attenuation() -> None:
     assert dist_free is not None
 
     # With 2 wall crossings (8 dB loss compensation), distance estimate is closer than raw RSSI would suggest
-    dist_walls = calculate_distance_from_rssi(-60, band="5", wall_crossings=2, wall_attenuation_db=4.0)
+    dist_walls = calculate_distance_from_rssi(
+        -60, band="5", wall_crossings=2, wall_attenuation_db=4.0
+    )
     assert dist_walls is not None
     assert dist_walls < dist_free
 
@@ -124,7 +126,14 @@ def test_room_boundary_clamping_and_furniture_snapping() -> None:
 def test_walking_activity_release() -> None:
     """Test that moving releases micro-zone and sets Walking activity."""
     tracker = PersonTracker(mac="aa:bb:cc:dd:ee:03", person_name="Assaf")
-    mz = MicroZone(name="Desk", area_id="office", floor_id="ground_floor", x_m=5.0, y_m=5.0, radius_m=1.2)
+    mz = MicroZone(
+        name="Desk",
+        area_id="office",
+        floor_id="ground_floor",
+        x_m=5.0,
+        y_m=5.0,
+        radius_m=1.2,
+    )
 
     # First update at (5.0, 5.0)
     tracker.update(

@@ -49,7 +49,9 @@ async def test_deco_discovery_provider(hass: HomeAssistant) -> None:
         mp.setattr(
             hass.config_entries,
             "async_entries",
-            lambda domain, *args, **kwargs: [mock_entry] if domain == "tplink_deco" else [],
+            lambda domain, *args, **kwargs: (
+                [mock_entry] if domain == "tplink_deco" else []
+            ),
         )
 
         provider = DecoDiscoveryProvider()
@@ -106,7 +108,9 @@ async def test_discover_all_routers_and_helpers(hass: HomeAssistant) -> None:
         mp.setattr(
             hass.config_entries,
             "async_entries",
-            lambda domain, *args, **kwargs: [mock_deco_entry] if domain == "tplink_deco" else [],
+            lambda domain, *args, **kwargs: (
+                [mock_deco_entry] if domain == "tplink_deco" else []
+            ),
         )
 
         routers = discover_all_routers(hass)

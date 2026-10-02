@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
 
 from .const import (
+    CONF_ADAPTIVE_POLLING,
     CONF_ANOMALY_THRESHOLD,
     CONF_BASELINE_DAYS,
     CONF_DECO_ANCHORS,
@@ -18,15 +19,29 @@ from .const import (
     CONF_HEATMAP_ENABLED,
     CONF_PERSON_TAGS,
     CONF_POLL_INTERVAL,
+    CONF_RF_COINCIDENCE_WINDOW_S,
+    CONF_RF_OFF_DELAY,
+    CONF_RF_PROXIMITY_THRESHOLD_M,
+    CONF_RF_SENSING_ENABLED,
+    CONF_RF_SENSITIVITY,
+    CONF_RF_WALL_BLEED_SUPPRESSION,
     CONF_ROUTER_HOST,
     CONF_ROUTER_PASSWORD,
     CONF_ROUTER_TYPE,
     CONF_ROUTER_USERNAME,
+    CONF_STATIONARY_DEVICES,
     CONF_VACUUM_ENTITIES,
+    DEFAULT_ADAPTIVE_POLLING,
     DEFAULT_ANOMALY_THRESHOLD,
     DEFAULT_BASELINE_DAYS,
     DEFAULT_FAST_EVENT_PUSH,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_RF_COINCIDENCE_WINDOW_S,
+    DEFAULT_RF_OFF_DELAY,
+    DEFAULT_RF_PROXIMITY_THRESHOLD_M,
+    DEFAULT_RF_SENSING_ENABLED,
+    DEFAULT_RF_SENSITIVITY,
+    DEFAULT_RF_WALL_BLEED_SUPPRESSION,
     DOMAIN,
     ROUTER_TYPE_DECO,
     ROUTER_TYPE_NONE,
@@ -319,6 +334,87 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                         custom_value=True,
                     )
                 ),
+                vol.Optional(
+                    CONF_RF_SENSING_ENABLED,
+                    default=current.get(
+                        CONF_RF_SENSING_ENABLED, DEFAULT_RF_SENSING_ENABLED
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_RF_SENSITIVITY,
+                    default=current.get(CONF_RF_SENSITIVITY, DEFAULT_RF_SENSITIVITY),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(
+                                value="low", label="Low (Stricter, large movement)"
+                            ),
+                            selector.SelectOptionDict(
+                                value="medium",
+                                label="Medium (Balanced everyday walking)",
+                            ),
+                            selector.SelectOptionDict(
+                                value="high", label="High (Sensitive subtle motion)"
+                            ),
+                        ],
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_RF_OFF_DELAY,
+                    default=current.get(CONF_RF_OFF_DELAY, DEFAULT_RF_OFF_DELAY),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=300)),
+                vol.Optional(
+                    CONF_ADAPTIVE_POLLING,
+                    default=current.get(
+                        CONF_ADAPTIVE_POLLING, DEFAULT_ADAPTIVE_POLLING
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_STATIONARY_DEVICES,
+                    default=current.get(CONF_STATIONARY_DEVICES, []),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=self._discover_client_options(),
+                        multiple=True,
+                        custom_value=True,
+                    )
+                ),
+                vol.Optional(
+                    CONF_RF_PROXIMITY_THRESHOLD_M,
+                    default=current.get(
+                        CONF_RF_PROXIMITY_THRESHOLD_M, DEFAULT_RF_PROXIMITY_THRESHOLD_M
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1.0,
+                        max=10.0,
+                        step=0.5,
+                        unit_of_measurement="m",
+                        mode=selector.NumberSelectorMode.SLIDER,
+                    )
+                ),
+                vol.Optional(
+                    CONF_RF_COINCIDENCE_WINDOW_S,
+                    default=current.get(
+                        CONF_RF_COINCIDENCE_WINDOW_S, DEFAULT_RF_COINCIDENCE_WINDOW_S
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=5,
+                        max=60,
+                        step=5,
+                        unit_of_measurement="s",
+                        mode=selector.NumberSelectorMode.SLIDER,
+                    )
+                ),
+                vol.Optional(
+                    CONF_RF_WALL_BLEED_SUPPRESSION,
+                    default=current.get(
+                        CONF_RF_WALL_BLEED_SUPPRESSION,
+                        DEFAULT_RF_WALL_BLEED_SUPPRESSION,
+                    ),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="general", data_schema=schema)
@@ -965,3 +1061,11 @@ class WiFiSenseOptionsFlow(config_entries.OptionsFlow):
                 clients[norm_mac] = f"{name or 'Tag'} ({norm_mac})"
 
         return clients
+
+    def _discover_client_options(self) -> list[selector.SelectOptionDict]:
+        """Return SelectOptionDict list for known clients to select as stationary."""
+        known = self._get_known_clients()
+        return [
+            selector.SelectOptionDict(value=mac, label=label)
+            for mac, label in sorted(known.items(), key=lambda item: item[1].lower())
+        ]

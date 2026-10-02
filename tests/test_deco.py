@@ -32,9 +32,7 @@ def test_deco_connect_sync_passes_username_and_ssl() -> None:
     """Test that _connect_sync passes username and verify_ssl=False to TPLinkDecoClient."""
     client = DecoClient("192.168.0.1", "custom_user", "secret_pass")
 
-    with patch(
-        "tplinkrouterc6u.TPLinkDecoClient"
-    ) as mock_tplink_cls:
+    with patch("tplinkrouterc6u.TPLinkDecoClient") as mock_tplink_cls:
         mock_instance = MagicMock()
         mock_tplink_cls.return_value = mock_instance
 
@@ -261,7 +259,9 @@ async def test_deco_async_methods() -> None:
     def fake_connect():
         client._client = MagicMock()
 
-    with patch.object(client, "_connect_sync", side_effect=fake_connect) as mock_connect_sync:
+    with patch.object(
+        client, "_connect_sync", side_effect=fake_connect
+    ) as mock_connect_sync:
         success = await client.async_connect()
         assert success is True
         assert client.is_connected is True
@@ -272,7 +272,9 @@ async def test_deco_async_methods() -> None:
         assert res == []
         mock_get_clients.assert_called_once()
 
-    with patch.object(client, "_get_ap_stats_sync", return_value=[]) as mock_get_ap_stats:
+    with patch.object(
+        client, "_get_ap_stats_sync", return_value=[]
+    ) as mock_get_ap_stats:
         res_ap = await client.async_get_ap_stats()
         assert res_ap == []
         mock_get_ap_stats.assert_called_once()
@@ -355,7 +357,11 @@ def test_deco_resilient_fallback_on_wlan_error() -> None:
         if "device_list" in path:
             return {
                 "device_list": [
-                    {"mac": "11-22-33-44-55-66", "custom_nickname": "Office Deco", "device_model": "X60"}
+                    {
+                        "mac": "11-22-33-44-55-66",
+                        "custom_nickname": "Office Deco",
+                        "device_model": "X60",
+                    }
                 ]
             }
         elif "client_list" in path:
@@ -545,3 +551,49 @@ def test_deco_client_parses_node_nicknames_and_various_signals() -> None:
     assert c3.rssi == -62
 
 
+@pytest.mark.asyncio
+async def test_deco_async_get_backhaul_links() -> None:
+    """Test extracting wireless mesh backhaul links between Deco nodes."""
+    client = DecoClient("192.168.0.1", "admin", "secret_pass")
+    client._connected = True
+    client._client = MagicMock()
+
+    # Mock Deco nodes with one master and one wireless satellite
+    nodes = [
+        {
+            "mac": "11:11:11:11:11:11",
+            "nickname": "Main Deco",
+            "role": "master",
+            "device_model": "Deco X50",
+        },
+        {
+            "mac": "22:22:22:22:22:22",
+            "nickname": "Living Room Deco",
+            "role": "satellite",
+            "parent_mac": "11:11:11:11:11:11",
+            "backhaul": {
+                "type": "wifi",
+                "signal_level": 3,
+                "rssi": -64,
+                "band": "5GHz",
+            },
+        },
+        {
+            "mac": "33:33:33:33:33:33",
+            "nickname": "Basement Deco",
+            "role": "satellite",
+            "backhaul": "ethernet",
+        },
+    ]
+
+    client._fetch_deco_nodes = MagicMock(return_value=nodes)
+    client._get_clients_sync = MagicMock(return_value=[])
+
+    links = await client.async_get_backhaul_links()
+    assert len(links) == 1
+    link = links[0]
+    assert link["satellite_mac"] == "22:22:22:22:22:22"
+    assert link["parent_mac"] == "11:11:11:11:11:11"
+    assert link["rssi"] == -64
+    assert link["type"] == "wifi"
+    assert link["band"] == "5GHz"

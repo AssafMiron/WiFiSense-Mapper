@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-09-30
+
+### Added
+- **Device-Free RF Motion & Disturbance Sensing**:
+  - Implemented non-invasive human presence & walking detection using Deco mesh wireless backhaul and stationary Wi-Fi IoT device links without requiring dedicated ESP32 hardware.
+  - Automatic classification of stationary Wi-Fi client anchors (zero-roaming, continuous uptime).
+  - Rolling baseline variance tracker and anomaly detection engine with adjustable sensitivity.
+  - New Home Assistant entities: `binary_sensor.<area>_rf_motion` and `sensor.<area>_rf_disturbance_score`.
+  - Real-time RF link perturbation visualization layer on 2D floorplans.
+
 ## [0.2.7] - 2026-09-28
 
 ### Fixed

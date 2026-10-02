@@ -73,6 +73,16 @@ async def async_setup_entry(
                 coordinator, entry, area.id, area.name, hub_device_info
             )
         )
+        entities.append(
+            WiFiSenseRFMotionBinarySensor(
+                coordinator, entry, area.id, area.name, hub_device_info
+            )
+        )
+        entities.append(
+            WiFiSenseUnidentifiedPresenceBinarySensor(
+                coordinator, entry, area.id, area.name, hub_device_info
+            )
+        )
 
     async_add_entities(entities)
 
@@ -182,7 +192,9 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
             ):
                 return True
 
-        return False
+        # Source D: RF motion / unidentified presence in this area
+        crosscheck = (data.get("rf_crosscheck") or {}).get(self._area_id)
+        return bool(crosscheck and crosscheck.unidentified_motion)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -244,10 +256,26 @@ class PresenceBinarySensor(WiFiSenseBaseBinary):
                 }
             )
 
+        crosscheck = (data.get("rf_crosscheck") or {}).get(self._area_id)
+        occupant_type = "verified" if occupants else "none"
+        unidentified_motion = False
+        unidentified_count = 0
+        rf_corroborated_occupant = None
+        if crosscheck:
+            occupant_type = crosscheck.occupant_type
+            unidentified_motion = crosscheck.unidentified_motion
+            unidentified_count = crosscheck.unidentified_count
+            rf_corroborated_occupant = crosscheck.rf_corroborated_occupant
+
         return {
             "area_id": self._area_id,
             "occupants": occupants,
             "occupant_count": len(occupants),
+            "occupant_type": occupant_type,
+            "unidentified_motion": unidentified_motion,
+            "verified_occupants": occupants,
+            "unidentified_count": unidentified_count,
+            "rf_corroborated_occupant": rf_corroborated_occupant,
             "device_count": len(area_clients),
             "devices": [c.hostname or c.mac for c in area_clients[:10]],
             "devices_detail": devices_detail,
@@ -346,4 +374,141 @@ class CSIMotionBinarySensor(WiFiSenseBaseBinary):
                 for n in floor_nodes
                 if getattr(n, "motion_detected_value", False)
             ],
+        }
+
+
+class WiFiSenseRFMotionBinarySensor(WiFiSenseBaseBinary):
+    """Device-free RF motion detection for an area using mesh backhaul and stationary Wi-Fi links."""
+
+    _attr_device_class = BinarySensorDeviceClass.MOTION
+    _attr_icon = "mdi:motion-sensor-wireless"
+    _attr_translation_key = "rf_motion"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        area_id: str,
+        area_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator, entry, f"rf_motion_{area_id}", device_info)
+        self._area_id = area_id
+        self._area_name = area_name
+        self._attr_name = f"{area_name} RF Motion"
+        self._attr_suggested_area = area_name
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if RF perturbation detected in this area."""
+        data = self.coordinator.data or {}
+        rf_snapshot = data.get("rf_sensing")
+        if rf_snapshot and hasattr(rf_snapshot, "area_motion"):
+            return bool(rf_snapshot.area_motion.get(self._area_id, False))
+        return False
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        rf_snapshot = data.get("rf_sensing")
+        score = 0.0
+        active_links = 0
+        link_details: list[dict[str, Any]] = []
+
+        if rf_snapshot:
+            score = rf_snapshot.area_scores.get(self._area_id, 0.0)
+            active_links = rf_snapshot.area_active_links.get(self._area_id, 0)
+            for link in getattr(rf_snapshot, "link_states", {}).values():
+                if link.get("area_id") == self._area_id:
+                    link_details.append(
+                        {
+                            "link_id": link.get("link_id"),
+                            "type": link.get("link_type"),
+                            "peer_name": link.get("peer_name"),
+                            "rssi": link.get("last_rssi"),
+                            "baseline": link.get("baseline_mean"),
+                            "variance": link.get("last_variance"),
+                            "score": link.get("disturbance_score"),
+                            "perturbed": link.get("is_perturbed"),
+                        }
+                    )
+
+        return {
+            "area_id": self._area_id,
+            "area_name": self._area_name,
+            "disturbance_score": score,
+            "active_links_count": active_links,
+            "sensitivity": self.coordinator.rf_sensitivity,
+            "off_delay_sec": self.coordinator.rf_off_delay,
+            "monitored_links": link_details,
+        }
+
+
+class WiFiSenseUnidentifiedPresenceBinarySensor(WiFiSenseBaseBinary):
+    """Device-free unidentified presence detection for an area.
+
+    Fires only when physical RF motion is detected in an area with NO verified
+    family member/connected device matching the disturbance.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.MOTION
+    _attr_icon = "mdi:account-question"
+    _attr_translation_key = "unidentified_presence"
+
+    def __init__(
+        self,
+        coordinator: WiFiSenseCoordinator,
+        entry: ConfigEntry,
+        area_id: str,
+        area_name: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(
+            coordinator, entry, f"unidentified_presence_{area_id}", device_info
+        )
+        self._area_id = area_id
+        self._area_name = area_name
+        self._attr_name = f"{area_name} Unidentified Presence"
+        self._attr_suggested_area = area_name
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if an unidentified physical motion perturbation is detected."""
+        data = self.coordinator.data or {}
+        crosscheck = (data.get("rf_crosscheck") or {}).get(self._area_id)
+        if crosscheck:
+            return bool(crosscheck.unidentified_motion)
+        return False
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data or {}
+        crosscheck = (data.get("rf_crosscheck") or {}).get(self._area_id)
+        score = 0.0
+        active_links = 0
+        occupant_type = "none"
+        verified: list[str] = []
+        last_unidentified_ts = None
+
+        if crosscheck:
+            score = crosscheck.disturbance_score
+            active_links = crosscheck.active_links_count
+            occupant_type = crosscheck.occupant_type
+            verified = list(crosscheck.verified_occupants)
+            last_unidentified_ts = crosscheck.last_unidentified_ts
+
+        return {
+            "area_id": self._area_id,
+            "area_name": self._area_name,
+            "disturbance_score": score,
+            "active_links_count": active_links,
+            "occupant_type": occupant_type,
+            "verified_occupants": verified,
+            "last_unidentified_ts": last_unidentified_ts,
+            "proximity_threshold_m": getattr(
+                self.coordinator, "rf_proximity_threshold_m", 3.5
+            ),
+            "coincidence_window_sec": getattr(
+                self.coordinator, "rf_coincidence_window_s", 15.0
+            ),
         }
